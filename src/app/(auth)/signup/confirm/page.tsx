@@ -17,14 +17,29 @@ export default function SignupConfirmPage() {
           We sent a confirmation link to your inbox. Click it to activate your account.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm text-muted-foreground">
-        <p>The link expires in 24 hours. Check your spam folder if you don&apos;t see it.</p>
-        <p>
-          Wrong email?{' '}
-          <Link href="/signup" className="text-primary hover:underline font-medium">
-            Sign up again
-          </Link>
-        </p>
+      <CardContent className="space-y-4 text-sm text-muted-foreground">
+        <p>The link expires in 24 hours.</p>
+
+        <hr className="border-border" />
+
+        <div className="text-left space-y-2">
+          <p className="font-medium text-foreground">What if I don&apos;t get the email?</p>
+          <ul className="space-y-1.5">
+            <li>Check your spam folder.</li>
+            <li>
+              You may already have an account —{' '}
+              <Link href="/login" className="text-primary hover:underline font-medium">
+                Sign in instead →
+              </Link>
+            </li>
+            <li>
+              Wrong email?{' '}
+              <Link href="/signup" className="text-primary hover:underline font-medium">
+                Sign up again →
+              </Link>
+            </li>
+          </ul>
+        </div>
       </CardContent>
     </Card>
   )
