@@ -15,7 +15,12 @@ const CHUNK_SIZE = 500
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
+  {
+    auth: { autoRefreshToken: false, persistSession: false },
+    // No-op transport prevents WebSocketFactory.getWebSocketConstructor() from
+    // throwing on Node < 22. This script only uses the REST/PostgREST layer.
+    realtime: { transport: class {} as unknown as typeof WebSocket },
+  }
 )
 
 async function getCSV(): Promise<string> {
