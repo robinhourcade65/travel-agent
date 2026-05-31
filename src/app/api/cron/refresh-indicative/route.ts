@@ -1,6 +1,10 @@
 // Cron endpoint — refreshes indicative prices for all configured origins.
 //
-// Scheduled via vercel.json: runs twice daily (06:00 and 18:00 UTC).
+// Scheduled via vercel.json: runs once daily at 06:00 UTC.
+// NOTE: Vercel Hobby plan allows max 1 cron job per day per project.
+// Once-daily refresh is acceptable for V1 indicative prices (data changes slowly).
+// To run more frequently: upgrade to Vercel Pro, or use an external scheduler
+// such as cron-job.org to hit this endpoint with ?budget=300000 on your own schedule.
 // Default soft time limit: 55s (Vercel hobby cron timeout is 60s).
 //
 // Manual / seed usage — override the budget with ?budget=<ms>:
