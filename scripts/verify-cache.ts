@@ -48,13 +48,15 @@ async function main() {
   resetCounter();
 
   rawLog('\nCall 1 (expect: cache miss → Duffel API call)');
-  const r1 = await getFlightOffers(SEQ);
+  const { offers: r1, cached: r1Cached } = await getFlightOffers(SEQ);
 
   rawLog('\nCall 2 (expect: cache hit → no Duffel call)');
-  const r2 = await getFlightOffers(SEQ);
+  const { offers: r2, cached: r2Cached } = await getFlightOffers(SEQ);
 
   rawLog('\n--- Assertions ---');
   check(duffelCallCount === 1, `Exactly 1 Duffel call across 2 sequential calls (got ${duffelCallCount})`);
+  check(!r1Cached, `Call 1 reported cached=false (live from Duffel)`);
+  check(r2Cached, `Call 2 reported cached=true (from DB)`);
   check(r1.length > 0, `Call 1 returned offers (got ${r1.length})`);
   check(r2.length > 0, `Call 2 returned offers from cache (got ${r2.length})`);
   check(
@@ -74,7 +76,7 @@ async function main() {
   resetCounter();
 
   rawLog('\nCalling getFlightOffers 3× concurrently…');
-  const [c1, c2, c3] = await Promise.all([
+  const [{ offers: c1 }, { offers: c2 }, { offers: c3 }] = await Promise.all([
     getFlightOffers(CONC),
     getFlightOffers(CONC),
     getFlightOffers(CONC),

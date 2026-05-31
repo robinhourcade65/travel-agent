@@ -4,7 +4,9 @@ import { FlightOffer } from '@/types/flights';
 
 // Per-process dedup map. Vercel single-region V1: this is acceptable.
 // TODO: move to Upstash Redis when scaling to multi-region.
-const pendingRequests = new Map<string, Promise<FlightOffer[]>>();
+const pendingRequests = new Map<string, Promise<{ offers: FlightOffer[]; cached: boolean }>>();
+
+export type FlightOffersResult = { offers: FlightOffer[]; cached: boolean };
 
 export type GetFlightOffersParams = {
   origin: string;
@@ -49,7 +51,7 @@ function rowToOffer(row: Record<string, unknown>): FlightOffer {
   };
 }
 
-export async function getFlightOffers(params: GetFlightOffersParams): Promise<FlightOffer[]> {
+export async function getFlightOffers(params: GetFlightOffersParams): Promise<FlightOffersResult> {
   const { origin, destination, departDate, returnDate, passengers = 1 } = params;
   const route = `${origin}→${destination} on ${departDate}`;
 
@@ -74,7 +76,7 @@ export async function getFlightOffers(params: GetFlightOffersParams): Promise<Fl
 
   if (cached && cached.length > 0) {
     console.log(`[cache] hit  ${route} — ${cached.length} offers from DB`);
-    return cached.map(rowToOffer);
+    return { offers: cached.map(rowToOffer), cached: true };
   }
 
   // 2 — cache miss: attach to any in-flight request for the same key (dedup)
@@ -101,7 +103,7 @@ async function fetchAndStore(params: {
   departDate: string;
   returnDate: string | undefined;
   passengers: number;
-}): Promise<FlightOffer[]> {
+}): Promise<FlightOffersResult> {
   const { origin, destination, departDate, returnDate, passengers } = params;
   const route = `${origin}→${destination} on ${departDate}`;
 
@@ -119,7 +121,7 @@ async function fetchAndStore(params: {
 
   if (offers.length === 0) {
     console.log(`[cache] no offers returned for ${route}`);
-    return offers;
+    return { offers, cached: false };
   }
 
   const admin = createAdminClient();
@@ -168,5 +170,5 @@ async function fetchAndStore(params: {
     console.log(`[cache] stored ${rows.length} offers for ${route} (expires ${expiresAt})`);
   }
 
-  return offers;
+  return { offers, cached: false };
 }
