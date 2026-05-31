@@ -26,11 +26,11 @@ export type SearchOffersParams = {
 export async function searchOffers(params: SearchOffersParams): Promise<FlightOffer[]> {
   const { origin, destination, departDate, returnDate, passengers = 1 } = params;
 
-  const slices: { origin: string; destination: string; departure_date: string }[] = [
-    { origin, destination, departure_date: departDate },
+  const slices: { origin: string; destination: string; departure_date: string; arrival_time: null; departure_time: null }[] = [
+    { origin, destination, departure_date: departDate, arrival_time: null, departure_time: null },
   ];
   if (returnDate) {
-    slices.push({ origin: destination, destination: origin, departure_date: returnDate });
+    slices.push({ origin: destination, destination: origin, departure_date: returnDate, arrival_time: null, departure_time: null });
   }
 
   const passengerList = Array.from({ length: passengers }, () => ({ type: 'adult' as const }));

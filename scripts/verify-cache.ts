@@ -7,7 +7,7 @@
  *   2. Concurrent: three simultaneous calls with same params → dedup → only 1 Duffel call fires
  */
 
-import { getFlightOffers } from '../src/server/flights/cache.ts';
+import { getFlightOffers } from '../src/server/flights/cache';
 
 // --- Log interceptor to count actual Duffel API calls ---
 let duffelCallCount = 0;

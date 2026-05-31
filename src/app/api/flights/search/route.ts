@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
   const parsed = searchSchema.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    return badRequest(`${first.path[0]}: ${first.message}`);
+    return badRequest(`${String(first.path[0] ?? 'field')}: ${first.message}`);
   }
 
   const { origin, destination, departDate, returnDate } = parsed.data;
