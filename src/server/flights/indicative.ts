@@ -1,5 +1,7 @@
+import { DuffelError } from '@duffel/api';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getFlightOffers } from '@/server/flights/cache';
+import { FlightDataError } from '@/types/flights';
 
 const FRESH_MS = 4 * 60 * 60 * 1000; // 4 hours — skip rows computed more recently than this
 const CALL_GUARD = 1000; // refuse to run if estimate exceeds this without force=true
@@ -24,6 +26,29 @@ function nextThreeMonths(): Array<{ departDate: string; returnDate: string; mont
       monthKey: monthFirst.toISOString().slice(0, 10),
     };
   });
+}
+
+// A Duffel HTTP 422 means the IATA code is not recognised by their airline
+// partners (not a transient error). FlightDataError wraps the original
+// DuffelError in its .cause field.
+function isDuffelInvalidIata(err: unknown): boolean {
+  const cause = err instanceof FlightDataError ? err.cause : err;
+  return cause instanceof DuffelError && cause.meta?.status === 422;
+}
+
+async function markAirportUnsupported(
+  admin: ReturnType<typeof createAdminClient>,
+  iata: string,
+): Promise<void> {
+  const { error } = await admin
+    .from('airports')
+    .update({ duffel_supported: false })
+    .eq('iata', iata);
+  if (error) {
+    console.error(`[indicative] Failed to mark ${iata} duffel_supported=false:`, error.message);
+  } else {
+    console.log(`[indicative] ${iata} marked duffel_supported=false (Duffel 422 — will skip on future runs)`);
+  }
 }
 
 export type IndicativeResult = {
@@ -58,10 +83,15 @@ export async function refreshIndicativePrices(
 
   const originCountry = originRow?.country_code ?? null;
 
-  // 2 — Load all airports (excluding origin country) and pick the
-  //     representative airport per country: is_major=true preferred,
-  //     alphabetically first IATA as fallback.
-  let apQuery = admin.from('airports').select('iata, country_code, is_major');
+  // 2 — Load all airports with duffel_supported=true (excluding origin country).
+  //     Preference order for representative airport per country:
+  //       1. duffel_supported = true  (guaranteed by this filter)
+  //       2. is_major = true
+  //       3. alphabetically first IATA
+  let apQuery = admin
+    .from('airports')
+    .select('iata, country_code, is_major')
+    .eq('duffel_supported', true);
   if (originCountry) apQuery = apQuery.neq('country_code', originCountry);
 
   const { data: airportRows, error: apError } = await apQuery;
@@ -77,12 +107,11 @@ export async function refreshIndicativePrices(
       repByCountry.set(row.country_code, row.iata);
     } else if (row.is_major) {
       // Prefer is_major; among multiple majors keep alphabetically first
-      if (!airportRows.find((r) => r.iata === existing)?.is_major || row.iata < existing) {
+      const existingIsMajor = airportRows.find((r) => r.iata === existing)?.is_major ?? false;
+      if (!existingIsMajor || row.iata < existing) {
         repByCountry.set(row.country_code, row.iata);
       }
     }
-    // If neither is major, keep the alphabetically first (map already holds it
-    // since we process rows in DB order — upsert at the end handles ties)
   }
 
   const countries = Array.from(repByCountry.entries()); // [countryCode, repIata]
@@ -108,6 +137,8 @@ export async function refreshIndicativePrices(
 
   // 4 — Main loop: country × month
   outer: for (const [countryCode, repIata] of countries) {
+    let airportMarkedUnsupported = false;
+
     for (const { departDate, returnDate, monthKey } of months) {
       // Soft time limit — checked before each Duffel call
       if (Date.now() - startTime > budget) {
@@ -173,11 +204,23 @@ export async function refreshIndicativePrices(
           pricesStored++;
         }
       } catch (err) {
+        const invalidIata = isDuffelInvalidIata(err);
+
         console.error(
-          `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate}:`,
+          `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate}` +
+            (invalidIata ? ' [Duffel 422 — invalid IATA]' : '') + ':',
           err instanceof Error ? err.message : err,
         );
+
         errors++;
+
+        if (invalidIata && !airportMarkedUnsupported) {
+          // Mark once per country — no point marking for each month failure
+          await markAirportUnsupported(admin, repIata);
+          airportMarkedUnsupported = true;
+          // Break month loop: all months will fail for the same airport
+          break;
+        }
       }
 
       await sleep(SLEEP_MS);
