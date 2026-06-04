@@ -2,6 +2,7 @@ import { DuffelError } from '@duffel/api';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getFlightOffers } from '@/server/flights/cache';
 import { FlightDataError } from '@/types/flights';
+import { COUNTRY_HUBS } from '@/lib/flights/country-hubs';
 
 const FRESH_MS = 4 * 60 * 60 * 1000; // 4 hours — skip rows computed more recently than this
 const CALL_GUARD = 1000; // refuse to run if estimate exceeds this without force=true
@@ -111,6 +112,17 @@ export async function refreshIndicativePrices(
       if (!existingIsMajor || row.iata < existing) {
         repByCountry.set(row.country_code, row.iata);
       }
+    }
+  }
+
+  // Override with curated hubs — if a hub IATA is present and duffel_supported=true
+  // (i.e. it's in the loaded set), use it in preference to the alphabetic pick.
+  // This fixes countries where alphabetic ordering chose a small/unsupported airport
+  // that got marked duffel_supported=false, causing the country to be skipped forever.
+  const loadedIatas = new Set(airportRows.map((r) => r.iata));
+  for (const [countryCode, hubIata] of Object.entries(COUNTRY_HUBS)) {
+    if (loadedIatas.has(hubIata)) {
+      repByCountry.set(countryCode, hubIata);
     }
   }
 
