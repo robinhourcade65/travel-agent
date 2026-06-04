@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "seed:airports": "tsx --env-file=.env.local scripts/seed-airports.ts",
+    "seed:indicative": "tsx --env-file=.env.local scripts/seed-indicative.ts",
     "verify:cache": "tsx --env-file=.env.local scripts/verify-cache.ts"
   },
   "dependencies": {
