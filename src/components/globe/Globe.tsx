@@ -29,7 +29,7 @@ type Props = {
   origin: string
 }
 
-const NO_DATA_COLOR = '#E5E7EB'
+const NO_DATA_COLOR = '#F5F5F4'   // pale cream — "no flight data" countries
 const STROKE_COLOR = '#D1D5DB'
 const HOVER_ALTITUDE = 0.018
 const BASE_ALTITUDE = 0.006
@@ -65,6 +65,14 @@ function resolveIso(props: Record<string, string>): string | null {
   return null
 }
 
+function formatPrice(minor: number, currency: string): string {
+  return new Intl.NumberFormat('en-IE', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0,
+  }).format(minor / 100)
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return '—'
   const diffMins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
@@ -88,10 +96,11 @@ export default function Globe({ origin }: Props) {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
   const [tick, setTick] = useState(0)
 
+  // #9CA3AF = ocean mid-gray, visually distinct from the pale-cream no-data countries
   const globeMaterial = useMemo(
     () =>
       new MeshPhongMaterial({
-        color: new Color('#F0F4F8'),
+        color: new Color('#9CA3AF'),
         shininess: 6,
         specular: new Color('#FFFFFF'),
       }),
@@ -139,6 +148,23 @@ export default function Globe({ origin }: Props) {
       map.set(entry.countryCode, priceToColor((entry.priceMinor - minP) / range))
     }
     return map
+  }, [heatmap])
+
+  // Legend data — min / median / max from current heatmap, formatted as currency
+  const legendData = useMemo(() => {
+    if (!heatmap || heatmap.results.length === 0) return null
+    const sorted = [...heatmap.results].sort((a, b) => a.priceMinor - b.priceMinor)
+    const mid = Math.floor(sorted.length / 2)
+    const medianMinor =
+      sorted.length % 2 !== 0
+        ? sorted[mid].priceMinor
+        : Math.round((sorted[mid - 1].priceMinor + sorted[mid].priceMinor) / 2)
+    const currency = sorted[0].currency
+    return {
+      min: formatPrice(sorted[0].priceMinor, currency),
+      median: formatPrice(medianMinor, currency),
+      max: formatPrice(sorted[sorted.length - 1].priceMinor, currency),
+    }
   }, [heatmap])
 
   // Inactivity timer — stops auto-rotate on interaction, resumes after 5s idle
@@ -294,6 +320,24 @@ export default function Globe({ origin }: Props) {
           </span>
           {/* key={tick} forces re-render so relativeTime updates */}
           <span key={tick}>Updated {relativeTime(heatmap.computedAt)}</span>
+        </div>
+      ) : null}
+
+      {/* Price legend — bottom-right, only when heatmap has data */}
+      {legendData ? (
+        <div className="absolute bottom-4 right-4 pointer-events-none select-none">
+          <div
+            className="h-2 rounded-full mb-1.5"
+            style={{
+              width: 200,
+              background: 'linear-gradient(to right, #3B82F6 0%, #FBBF24 50%, #EF4444 100%)',
+            }}
+          />
+          <div className="flex justify-between text-[10px] font-medium text-gray-500" style={{ width: 200 }}>
+            <span>{legendData.min}</span>
+            <span>{legendData.median}</span>
+            <span>{legendData.max}</span>
+          </div>
         </div>
       ) : null}
 
