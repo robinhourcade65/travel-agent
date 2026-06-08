@@ -49,29 +49,19 @@ export async function searchAirportsByCountry(countryCode: string): Promise<Coun
   const admin = createAdminClient()
   console.time(`city-pins-fetch:${countryCode}`)
 
-  const { data: major } = await admin
+  // Single query: major airports ranked first, capped at 5 pins per country.
+  // No two-query fallback needed — is_major DESC naturally surfaces majors first.
+  const { data } = await admin
     .from('airports')
     .select('iata, city, lat, lon')
     .eq('country_code', countryCode)
     .eq('duffel_supported', true)
-    .eq('is_major', true)
-    .order('iata')
-
-  // Fallback only fires when the major-airports query returns 0 rows
-  if (major && major.length > 0) {
-    console.timeEnd(`city-pins-fetch:${countryCode}`)
-    return major as CountryAirport[]
-  }
-
-  const { data: fallback } = await admin
-    .from('airports')
-    .select('iata, city, lat, lon')
-    .eq('country_code', countryCode)
-    .eq('duffel_supported', true)
-    .order('iata')
+    .order('is_major', { ascending: false })
+    .order('iata', { ascending: true })
+    .limit(5)
 
   console.timeEnd(`city-pins-fetch:${countryCode}`)
-  return (fallback ?? []) as CountryAirport[]
+  return (data ?? []) as CountryAirport[]
 }
 
 export async function getAirportInfo(iata: string): Promise<{ iata: string; city: string } | null> {

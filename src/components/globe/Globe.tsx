@@ -441,11 +441,9 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           pointsData={countryAirports}
           pointLat={(p) => (p as CountryAirport).lat}
           pointLng={(p) => (p as CountryAirport).lon}
-          pointAltitude={0.01}
-          pointRadius={0.35}
-          pointColor={(p) =>
-            (p as CountryAirport).iata === selectedIata ? '#2B5BE0' : '#FFFFFF'
-          }
+          pointAltitude={0.005}
+          pointRadius={(p) => (p as CountryAirport).iata === selectedIata ? 0.55 : 0.35}
+          pointColor={() => '#2B5BE0'}
           pointLabel={(p) => {
             const ap = p as CountryAirport
             return `<div style="background:rgba(15,15,35,0.82);padding:4px 10px;border-radius:6px;color:#fff;font-size:12px;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata} · ${ap.city}</div>`
