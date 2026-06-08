@@ -47,6 +47,7 @@ export type CountryAirport = {
 
 export async function searchAirportsByCountry(countryCode: string): Promise<CountryAirport[]> {
   const admin = createAdminClient()
+  console.time(`city-pins-fetch:${countryCode}`)
 
   const { data: major } = await admin
     .from('airports')
@@ -56,7 +57,11 @@ export async function searchAirportsByCountry(countryCode: string): Promise<Coun
     .eq('is_major', true)
     .order('iata')
 
-  if (major && major.length > 0) return major as CountryAirport[]
+  // Fallback only fires when the major-airports query returns 0 rows
+  if (major && major.length > 0) {
+    console.timeEnd(`city-pins-fetch:${countryCode}`)
+    return major as CountryAirport[]
+  }
 
   const { data: fallback } = await admin
     .from('airports')
@@ -65,6 +70,7 @@ export async function searchAirportsByCountry(countryCode: string): Promise<Coun
     .eq('duffel_supported', true)
     .order('iata')
 
+  console.timeEnd(`city-pins-fetch:${countryCode}`)
   return (fallback ?? []) as CountryAirport[]
 }
 
