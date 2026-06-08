@@ -13,7 +13,7 @@ type FlightLoadState =
   | { status: 'loaded'; offers: FlightOffer[] }
   | { status: 'empty' }
   | { status: 'error'; onRetry: () => void }
-  | { status: 'rate-limited' }
+  | { status: 'rate-limited'; retryAfterMinutes: number }
 
 function Breadcrumb({
   countryCode,
@@ -117,7 +117,8 @@ export default function RightPanel() {
       .then(async (res) => {
         if (version !== fetchVersion.current) return
         if (res.status === 429) {
-          setFlightState({ status: 'rate-limited' })
+          const retryAfterSecs = parseInt(res.headers.get('Retry-After') ?? '3600', 10)
+          setFlightState({ status: 'rate-limited', retryAfterMinutes: Math.ceil(retryAfterSecs / 60) })
           return
         }
         if (!res.ok) {

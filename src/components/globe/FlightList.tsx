@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import type { FlightOffer } from '@/types/flights'
 import FlightCard from './FlightCard'
 
@@ -12,7 +13,7 @@ type LoadState =
   | { status: 'loaded'; offers: FlightOffer[] }
   | { status: 'empty' }
   | { status: 'error'; onRetry: () => void }
-  | { status: 'rate-limited' }
+  | { status: 'rate-limited'; retryAfterMinutes: number }
 
 type Props = {
   state: LoadState
@@ -107,10 +108,18 @@ export default function FlightList({ state }: Props) {
         )}
 
         {state.status === 'rate-limited' && (
-          <div className="flex flex-col items-center justify-center h-full gap-2 px-6 py-12 text-center">
+          <div className="flex flex-col items-center justify-center h-full gap-3 px-6 py-12 text-center">
             <p className="text-sm font-medium text-gray-700">Too many searches.</p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              Sign up for a free account to get more, or come back in an hour.
+              Try again in {state.retryAfterMinutes}{' '}
+              {state.retryAfterMinutes === 1 ? 'minute' : 'minutes'}, or{' '}
+              <Link
+                href="/signup"
+                className="font-semibold text-[#2B5BE0] hover:underline"
+              >
+                sign up
+              </Link>{' '}
+              for more capacity.
             </p>
           </div>
         )}
