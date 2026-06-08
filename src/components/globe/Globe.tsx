@@ -87,12 +87,11 @@ function relativeTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function getFeatureBounds(geometry: { type: string; coordinates: unknown }): {
-  lat: number; lng: number; area: number
-} {
-  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
+type Bounds = { minLat: number; maxLat: number; minLng: number; maxLng: number; area: number }
 
-  function processRing(ring: [number, number][]) {
+function ringsBounds(rings: [number, number][][]): Bounds {
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
+  for (const ring of rings) {
     for (const [lng, lat] of ring) {
       if (lat < minLat) minLat = lat
       if (lat > maxLat) maxLat = lat
@@ -100,17 +99,33 @@ function getFeatureBounds(geometry: { type: string; coordinates: unknown }): {
       if (lng > maxLng) maxLng = lng
     }
   }
+  return { minLat, maxLat, minLng, maxLng, area: (maxLat - minLat) * (maxLng - minLng) }
+}
+
+function getFeatureBounds(geometry: { type: string; coordinates: unknown }): {
+  lat: number; lng: number; area: number
+} {
+  let best: Bounds
 
   if (geometry.type === 'Polygon') {
-    for (const ring of geometry.coordinates as [number, number][][]) processRing(ring)
+    best = ringsBounds(geometry.coordinates as [number, number][][])
   } else if (geometry.type === 'MultiPolygon') {
+    // Use only the largest individual polygon — prevents overseas territories (French Guiana,
+    // Falklands, Hawaii, Greenland, etc.) from inflating the bounding box and breaking the zoom.
+    best = { minLat: 0, maxLat: 0, minLng: 0, maxLng: 0, area: 0 }
     for (const poly of geometry.coordinates as [number, number][][][]) {
-      for (const ring of poly) processRing(ring)
+      const b = ringsBounds(poly)
+      if (b.area > best.area) best = b
     }
+  } else {
+    return { lat: 0, lng: 0, area: 1 }
   }
 
-  const area = (maxLat - minLat) * (maxLng - minLng)
-  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2, area }
+  return {
+    lat: (best.minLat + best.maxLat) / 2,
+    lng: (best.minLng + best.maxLng) / 2,
+    area: best.area,
+  }
 }
 
 // Altitude at altitude 0.5 = very close (small country fills view); 1.5 = zoomed out (Russia/USA)
