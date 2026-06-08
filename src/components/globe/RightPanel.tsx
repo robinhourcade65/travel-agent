@@ -1,28 +1,206 @@
 'use client'
 
-export default function RightPanel() {
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import type { FlightOffer } from '@/types/flights'
+import { getAirportInfo } from '@/server/airports'
+import { getCountryName } from '@/lib/country-names'
+import FlightList from './FlightList'
+
+type FlightLoadState =
+  | { status: 'no-date' }
+  | { status: 'loading' }
+  | { status: 'loaded'; offers: FlightOffer[] }
+  | { status: 'empty' }
+  | { status: 'error'; onRetry: () => void }
+  | { status: 'rate-limited' }
+
+function Breadcrumb({
+  countryCode,
+  countryName,
+  cityIata,
+  cityName,
+  onAllCountries,
+  onCountry,
+}: {
+  countryCode: string
+  countryName: string
+  cityIata: string | null
+  cityName: string | null
+  onAllCountries: () => void
+  onCountry: () => void
+}) {
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
-      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-1">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="22"
-          height="22"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#9CA3AF"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
-          <circle cx="12" cy="10" r="3" />
+    <div className="flex items-center gap-1 px-4 py-3 border-b border-[#F3F4F6] flex-shrink-0 min-w-0">
+      <button
+        onClick={onAllCountries}
+        className="flex items-center gap-1 text-xs text-gray-400 hover:text-[#2B5BE0] transition flex-shrink-0"
+        aria-label="Back to all countries"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
+        All countries
+      </button>
+
+      <span className="text-gray-300 text-xs flex-shrink-0">/</span>
+
+      {cityIata ? (
+        <button
+          onClick={onCountry}
+          className="text-xs text-gray-400 hover:text-[#2B5BE0] transition truncate"
+        >
+          {countryName}
+        </button>
+      ) : (
+        <span className="text-xs font-medium text-gray-700 truncate">{countryName}</span>
+      )}
+
+      {cityIata && cityName && (
+        <>
+          <span className="text-gray-300 text-xs flex-shrink-0">/</span>
+          <span className="text-xs font-medium text-gray-700 truncate">
+            {cityName} ({cityIata})
+          </span>
+        </>
+      )}
+    </div>
+  )
+}
+
+export default function RightPanel() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  const toCountry = searchParams.get('toCountry')
+  const to = searchParams.get('to')
+  const toCity = searchParams.get('toCity')
+  const toDefault = searchParams.get('toDefault')
+  const depart = searchParams.get('depart')
+  const returnDate = searchParams.get('return')
+  const from = searchParams.get('from') ?? 'DUB'
+
+  const [flightState, setFlightState] = useState<FlightLoadState>({ status: 'no-date' })
+  const [cityName, setCityName] = useState<string | null>(null)
+  const fetchVersion = useRef(0)
+
+  // Resolve city name for breadcrumb when a city pin is selected
+  useEffect(() => {
+    if (!toCity) {
+      setCityName(null)
+      return
+    }
+    getAirportInfo(toCity)
+      .then((info) => { if (info) setCityName(info.city) })
+      .catch(() => setCityName(null))
+  }, [toCity])
+
+  const doFetch = useCallback(() => {
+    if (!to) return
+    if (!depart) {
+      setFlightState({ status: 'no-date' })
+      return
+    }
+
+    const version = ++fetchVersion.current
+    setFlightState({ status: 'loading' })
+
+    const params = new URLSearchParams({
+      origin: from,
+      destination: to,
+      departDate: depart,
+    })
+    if (returnDate) params.set('returnDate', returnDate)
+
+    fetch(`/api/flights/search?${params.toString()}`)
+      .then(async (res) => {
+        if (version !== fetchVersion.current) return
+        if (res.status === 429) {
+          setFlightState({ status: 'rate-limited' })
+          return
+        }
+        if (!res.ok) {
+          setFlightState({ status: 'error', onRetry: doFetch })
+          return
+        }
+        const data = await res.json() as { results: FlightOffer[]; count: number }
+        if (version !== fetchVersion.current) return
+        if (data.count === 0) {
+          setFlightState({ status: 'empty' })
+        } else {
+          setFlightState({ status: 'loaded', offers: data.results })
+        }
+      })
+      .catch(() => {
+        if (version !== fetchVersion.current) return
+        setFlightState({ status: 'error', onRetry: doFetch })
+      })
+  }, [from, to, depart, returnDate])
+
+  useEffect(() => {
+    if (!to) return
+    doFetch()
+  }, [to, depart, returnDate, doFetch])
+
+  const clearSelection = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('toCountry')
+    params.delete('to')
+    params.delete('toDefault')
+    params.delete('toCity')
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, pathname, router])
+
+  const goToCountry = useCallback(() => {
+    if (!toDefault) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('to', toDefault)
+    params.delete('toCity')
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [toDefault, searchParams, pathname, router])
+
+  // No country selected — placeholder state
+  if (!toCountry) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+        <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-1">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#9CA3AF"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
+            <circle cx="12" cy="10" r="3" />
+          </svg>
+        </div>
+        <p className="text-sm font-medium text-gray-600">Select a country to see flights</p>
+        <p className="text-xs text-gray-400 max-w-[180px] leading-relaxed">
+          Hover the globe to explore prices, then click a country to drill in.
+        </p>
       </div>
-      <p className="text-sm font-medium text-gray-600">Select a country to see flights</p>
-      <p className="text-xs text-gray-400 max-w-[180px] leading-relaxed">
-        Hover the globe to explore prices, then click a country to drill in.
-      </p>
+    )
+  }
+
+  const countryName = getCountryName(toCountry)
+
+  return (
+    <div className="w-full h-full flex flex-col overflow-hidden">
+      <Breadcrumb
+        countryCode={toCountry}
+        countryName={countryName}
+        cityIata={toCity}
+        cityName={cityName}
+        onAllCountries={clearSelection}
+        onCountry={goToCountry}
+      />
+      <FlightList state={flightState} />
     </div>
   )
 }
