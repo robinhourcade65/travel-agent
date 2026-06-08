@@ -87,7 +87,9 @@ function relativeTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function getFeatureCenter(geometry: { type: string; coordinates: unknown }): { lat: number; lng: number } {
+function getFeatureBounds(geometry: { type: string; coordinates: unknown }): {
+  lat: number; lng: number; area: number
+} {
   let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
 
   function processRing(ring: [number, number][]) {
@@ -107,7 +109,13 @@ function getFeatureCenter(geometry: { type: string; coordinates: unknown }): { l
     }
   }
 
-  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 }
+  const area = (maxLat - minLat) * (maxLng - minLng)
+  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2, area }
+}
+
+// Altitude at altitude 0.5 = very close (small country fills view); 1.5 = zoomed out (Russia/USA)
+function altitudeForArea(area: number): number {
+  return Math.max(0.5, Math.min(1.5, Math.sqrt(area) / 30))
 }
 
 export default function Globe({ origin, selectedCountryCode, selectedIata }: Props) {
@@ -182,8 +190,8 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
     if (selectedCountryCode) {
       const feature = geoFeatures?.find((f) => resolveIso(f.properties) === selectedCountryCode)
       if (feature) {
-        const { lat, lng } = getFeatureCenter(feature.geometry)
-        globeRef.current.pointOfView({ lat, lng, altitude: 1.8 }, 1200)
+        const { lat, lng, area } = getFeatureBounds(feature.geometry)
+        globeRef.current.pointOfView({ lat, lng, altitude: altitudeForArea(area) }, 1200)
       }
       globeRef.current.controls().autoRotate = false
 
