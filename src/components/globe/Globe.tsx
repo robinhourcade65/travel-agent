@@ -327,7 +327,7 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
       params.set('to', entry.cheapestIata)
       params.set('toDefault', entry.cheapestIata)
       params.delete('toCity')
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      router.push(`${pathname}?${params.toString()}`)
     },
     [heatmap, searchParams, pathname, router],
   )
@@ -349,7 +349,7 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
       const params = new URLSearchParams(searchParams.toString())
       params.set('to', airport.iata)
       params.set('toCity', airport.iata)
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      router.push(`${pathname}?${params.toString()}`)
     },
     [searchParams, pathname, router],
   )

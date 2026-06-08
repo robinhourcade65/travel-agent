@@ -68,13 +68,12 @@ function AirlineLogo({ iata }: { iata: string }) {
 
 export default function FlightCard({ offer }: Props) {
   const href = offer.deeplink ?? `/flight/${offer.id}`
-  const isExternal = !!offer.deeplink
 
   return (
     <a
       href={href}
-      target={isExternal ? '_blank' : '_self'}
-      rel={isExternal ? 'noopener noreferrer' : undefined}
+      target="_blank"
+      rel="noopener noreferrer"
       className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 transition-colors border-b border-[#F3F4F6] last:border-b-0 cursor-pointer group"
     >
       <AirlineLogo iata={offer.airlineIata} />
