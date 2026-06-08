@@ -3,6 +3,7 @@ import { Suspense } from 'react'
 import LeftPanel from '@/components/globe/LeftPanel'
 import GlobeWrapper from '@/components/globe/GlobeWrapper'
 import RightPanel from '@/components/globe/RightPanel'
+import MobileBottomSheet from '@/components/globe/MobileBottomSheet'
 
 function PanelSkeleton() {
   return <div className="w-full h-full bg-white animate-pulse" />
@@ -29,38 +30,24 @@ export default async function Page() {
         </Suspense>
       </aside>
 
-      {/* Globe — fills remaining space */}
-      <div className="flex-1 min-h-0 relative">
+      {/* Globe — fills remaining space; bottom padding on mobile for the sheet */}
+      <div className="flex-1 min-h-0 relative pb-14 md:pb-0">
         <Suspense fallback={<GlobeSkeleton />}>
           <GlobeWrapper />
         </Suspense>
       </div>
 
-      {/* Right panel — flight list placeholder (Phase B) */}
-      <aside className="hidden md:block md:w-80 md:flex-shrink-0 border-l border-[#E5E7EB] bg-white">
-        <RightPanel />
+      {/* Right panel — desktop only */}
+      <aside className="hidden md:flex md:w-80 md:flex-shrink-0 border-l border-[#E5E7EB] bg-white flex-col overflow-hidden">
+        <Suspense fallback={<PanelSkeleton />}>
+          <RightPanel />
+        </Suspense>
       </aside>
 
-      {/* Mobile bottom sheet — right panel stub */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#E5E7EB] py-4 z-20">
-        <div className="flex items-center justify-center gap-2 text-sm text-gray-400">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
-            <circle cx="12" cy="10" r="3" />
-          </svg>
-          Select a country to see flights
-        </div>
-      </div>
+      {/* Mobile bottom sheet */}
+      <Suspense>
+        <MobileBottomSheet />
+      </Suspense>
     </main>
   )
 }
