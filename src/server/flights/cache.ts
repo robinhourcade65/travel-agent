@@ -92,7 +92,8 @@ export async function getFlightOffers(params: GetFlightOffersParams): Promise<Fl
   // 3 — new Duffel fetch
   const fetchPromise = fetchAndStore({ origin, destination, departDate, returnDate, passengers });
   pendingRequests.set(key, fetchPromise);
-  fetchPromise.finally(() => pendingRequests.delete(key));
+  // .catch first so the .finally chain never produces an unhandled rejection on Node 20+
+  fetchPromise.catch(() => {}).finally(() => pendingRequests.delete(key));
 
   return fetchPromise;
 }

@@ -32,9 +32,15 @@ function nextThreeMonths(): Array<{ departDate: string; returnDate: string; mont
 // A Duffel HTTP 422 means the IATA code is not recognised by their airline
 // partners (not a transient error). FlightDataError wraps the original
 // DuffelError in its .cause field.
+//
+// We duck-type instead of using `instanceof DuffelError` because Next.js can
+// resolve the ESM and CJS bundles of @duffel/api to different objects, making
+// instanceof unreliable across module boundaries.
 function isDuffelInvalidIata(err: unknown): boolean {
   const cause = err instanceof FlightDataError ? err.cause : err;
-  return cause instanceof DuffelError && cause.meta?.status === 422;
+  if (typeof cause !== 'object' || cause === null) return false;
+  const c = cause as { meta?: { status?: number }; errors?: Array<{ code?: string }> };
+  return c.meta?.status === 422 && c.errors?.[0]?.code === 'invalid_iata_code';
 }
 
 async function markAirportUnsupported(
@@ -115,13 +121,18 @@ export async function refreshIndicativePrices(
     }
   }
 
-  // Override with curated hubs — if a hub IATA is present and duffel_supported=true
-  // (i.e. it's in the loaded set), use it in preference to the alphabetic pick.
-  // This fixes countries where alphabetic ordering chose a small/unsupported airport
-  // that got marked duffel_supported=false, causing the country to be skipped forever.
-  const loadedIatas = new Set(airportRows.map((r) => r.iata));
+  // Override with curated hubs. We query hub airports separately — without the
+  // duffel_supported filter — so the override always wins even if a hub was
+  // previously marked duffel_supported=false by an earlier failed run. If the
+  // hub is still broken, the 422 handler below will re-mark it and move on.
+  const hubIatas = Object.values(COUNTRY_HUBS);
+  const { data: hubRows } = await admin
+    .from('airports')
+    .select('iata')
+    .in('iata', hubIatas);
+  const hubIataSet = new Set((hubRows ?? []).map((r) => r.iata));
   for (const [countryCode, hubIata] of Object.entries(COUNTRY_HUBS)) {
-    if (loadedIatas.has(hubIata)) {
+    if (hubIataSet.has(hubIata)) {
       repByCountry.set(countryCode, hubIata);
     }
   }
@@ -216,23 +227,28 @@ export async function refreshIndicativePrices(
           pricesStored++;
         }
       } catch (err) {
-        const invalidIata = isDuffelInvalidIata(err);
-
-        console.error(
-          `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate}` +
-            (invalidIata ? ' [Duffel 422 — invalid IATA]' : '') + ':',
-          err instanceof Error ? err.message : err,
-        );
-
         errors++;
 
-        if (invalidIata && !airportMarkedUnsupported) {
-          // Mark once per country — no point marking for each month failure
-          await markAirportUnsupported(admin, repIata);
-          airportMarkedUnsupported = true;
-          // Break month loop: all months will fail for the same airport
+        if (isDuffelInvalidIata(err)) {
+          // Confirmed Duffel 422 — airport not recognised by any airline partner.
+          // Mark once then break: all months will fail for the same dead airport.
+          console.error(
+            `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate} [Duffel 422 — invalid IATA]:`,
+            err instanceof Error ? err.message : err,
+          );
+          if (!airportMarkedUnsupported) {
+            await markAirportUnsupported(admin, repIata);
+            airportMarkedUnsupported = true;
+          }
           break;
         }
+
+        // Any other error (network, 5xx, unexpected shape): log and continue.
+        // Never re-throw here — one bad route must not abort the whole seed run.
+        console.error(
+          `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate}:`,
+          err instanceof Error ? err.message : err,
+        );
       }
 
       await sleep(SLEEP_MS);
