@@ -1,9 +1,11 @@
 'use client'
 
 import { useRef, useEffect, useState, useMemo, useCallback } from 'react'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import GlobeGL, { type GlobeMethods } from 'react-globe.gl'
 import { MeshPhongMaterial, Color, AmbientLight, DirectionalLight } from 'three'
 import Tooltip, { type TooltipData } from './Tooltip'
+import { searchAirportsByCountry, type CountryAirport } from '@/server/airports'
 
 type HeatmapEntry = {
   countryCode: string
@@ -27,9 +29,11 @@ type GeoFeature = {
 
 type Props = {
   origin: string
+  selectedCountryCode: string | null
+  selectedIata: string | null
 }
 
-const NO_DATA_COLOR = '#F5F5F4'   // pale cream — "no flight data" countries
+const NO_DATA_COLOR = '#F5F5F4'
 const STROKE_COLOR = '#D1D5DB'
 const HOVER_ALTITUDE = 0.018
 const BASE_ALTITUDE = 0.006
@@ -83,10 +87,39 @@ function relativeTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-export default function Globe({ origin }: Props) {
+function getFeatureCenter(geometry: { type: string; coordinates: unknown }): { lat: number; lng: number } {
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
+
+  function processRing(ring: [number, number][]) {
+    for (const [lng, lat] of ring) {
+      if (lat < minLat) minLat = lat
+      if (lat > maxLat) maxLat = lat
+      if (lng < minLng) minLng = lng
+      if (lng > maxLng) maxLng = lng
+    }
+  }
+
+  if (geometry.type === 'Polygon') {
+    for (const ring of geometry.coordinates as [number, number][][]) processRing(ring)
+  } else if (geometry.type === 'MultiPolygon') {
+    for (const poly of geometry.coordinates as [number, number][][][]) {
+      for (const ring of poly) processRing(ring)
+    }
+  }
+
+  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 }
+}
+
+export default function Globe({ origin, selectedCountryCode, selectedIata }: Props) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ref keeps selectedCountryCode accessible inside timeout callbacks without stale closures
+  const selectedCountryCodeRef = useRef(selectedCountryCode)
+
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
 
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [geoFeatures, setGeoFeatures] = useState<GeoFeature[] | null>(null)
@@ -95,8 +128,9 @@ export default function Globe({ origin }: Props) {
   const [hoveredFeature, setHoveredFeature] = useState<GeoFeature | null>(null)
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
   const [tick, setTick] = useState(0)
+  const [countryAirports, setCountryAirports] = useState<CountryAirport[]>([])
+  const [globeReady, setGlobeReady] = useState(false)
 
-  // #9CA3AF = ocean mid-gray, visually distinct from the pale-cream no-data countries
   const globeMaterial = useMemo(
     () =>
       new MeshPhongMaterial({
@@ -107,7 +141,11 @@ export default function Globe({ origin }: Props) {
     [],
   )
 
-  // Container resize observer — passes explicit dimensions to WebGL canvas
+  useEffect(() => {
+    selectedCountryCodeRef.current = selectedCountryCode
+  }, [selectedCountryCode])
+
+  // Container resize observer
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -128,7 +166,7 @@ export default function Globe({ origin }: Props) {
       .catch(() => setLoadError(true))
   }, [])
 
-  // Heatmap — re-fetched only when origin changes; result cached in state
+  // Heatmap — re-fetched only when origin changes
   useEffect(() => {
     setHeatmap(null)
     fetch(`/api/flights/heatmap?origin=${encodeURIComponent(origin)}`)
@@ -137,7 +175,46 @@ export default function Globe({ origin }: Props) {
       .catch(() => setLoadError(true))
   }, [origin])
 
-  // Color map: countryCode → hex — rebuilt only when heatmap results change
+  // Globe tilt animation + city pin fetch when focused country changes
+  useEffect(() => {
+    if (!globeReady || !globeRef.current) return
+
+    if (selectedCountryCode) {
+      const feature = geoFeatures?.find((f) => resolveIso(f.properties) === selectedCountryCode)
+      if (feature) {
+        const { lat, lng } = getFeatureCenter(feature.geometry)
+        globeRef.current.pointOfView({ lat, lng, altitude: 1.8 }, 1200)
+      }
+      globeRef.current.controls().autoRotate = false
+
+      let cancelled = false
+      searchAirportsByCountry(selectedCountryCode)
+        .then((airports) => { if (!cancelled) setCountryAirports(airports) })
+        .catch(console.error)
+      return () => { cancelled = true }
+    } else {
+      globeRef.current.pointOfView({ lat: 20, lng: 0, altitude: 2.5 }, 800)
+      globeRef.current.controls().autoRotate = true
+      setCountryAirports([])
+    }
+  }, [selectedCountryCode, geoFeatures, globeReady])
+
+  // ESC key → return to world view
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !selectedCountryCode) return
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('toCountry')
+      params.delete('to')
+      params.delete('toDefault')
+      params.delete('toCity')
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectedCountryCode, searchParams, pathname, router])
+
+  // Color map: countryCode → hex
   const colorMap = useMemo(() => {
     const map = new Map<string, string>()
     if (!heatmap || heatmap.results.length === 0) return map
@@ -150,7 +227,6 @@ export default function Globe({ origin }: Props) {
     return map
   }, [heatmap])
 
-  // Legend data — min / median / max from current heatmap, formatted as currency
   const legendData = useMemo(() => {
     if (!heatmap || heatmap.results.length === 0) return null
     const sorted = [...heatmap.results].sort((a, b) => a.priceMinor - b.priceMinor)
@@ -167,16 +243,16 @@ export default function Globe({ origin }: Props) {
     }
   }, [heatmap])
 
-  // Inactivity timer — stops auto-rotate on interaction, resumes after 5s idle
   const resetInactivity = useCallback(() => {
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current)
     if (globeRef.current) globeRef.current.controls().autoRotate = false
     inactivityTimer.current = setTimeout(() => {
-      if (globeRef.current) globeRef.current.controls().autoRotate = true
+      if (globeRef.current && !selectedCountryCodeRef.current) {
+        globeRef.current.controls().autoRotate = true
+      }
     }, 5000)
   }, [])
 
-  // Global mouse tracking for tooltip position + inactivity detection
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       setMousePos({ x: e.clientX, y: e.clientY })
@@ -186,14 +262,12 @@ export default function Globe({ origin }: Props) {
     return () => window.removeEventListener('mousemove', onMove)
   }, [resetInactivity])
 
-  // Cleanup inactivity timer on unmount
   useEffect(() => {
     return () => {
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current)
     }
   }, [])
 
-  // Tick every 30s to refresh "Updated X ago" label
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30000)
     return () => clearInterval(id)
@@ -213,6 +287,7 @@ export default function Globe({ origin }: Props) {
     globe.controls().autoRotate = true
     globe.controls().autoRotateSpeed = 0.3
     globe.controls().enableDamping = true
+    setGlobeReady(true)
   }, [])
 
   const getPolygonColor = useCallback(
@@ -229,13 +304,47 @@ export default function Globe({ origin }: Props) {
   )
 
   const handlePolygonHover = useCallback((feat: object | null) => {
-    setHoveredFeature((feat as GeoFeature | null))
+    setHoveredFeature(feat as GeoFeature | null)
   }, [])
 
-  const handlePolygonClick = useCallback((feat: object) => {
-    const code = resolveIso((feat as GeoFeature).properties)
-    if (code) console.log('[globe] country selected:', code)
-  }, [])
+  const handlePolygonClick = useCallback(
+    (feat: object) => {
+      const feature = feat as GeoFeature
+      const code = resolveIso(feature.properties)
+      if (!code || !heatmap) return
+      const entry = heatmap.results.find((r) => r.countryCode === code)
+      if (!entry) return // no heatmap data = no-op
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('toCountry', code)
+      params.set('to', entry.cheapestIata)
+      params.set('toDefault', entry.cheapestIata)
+      params.delete('toCity')
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [heatmap, searchParams, pathname, router],
+  )
+
+  // Ocean click → return to world view
+  const handleGlobeClick = useCallback(() => {
+    if (!selectedCountryCode || hoveredFeature) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('toCountry')
+    params.delete('to')
+    params.delete('toDefault')
+    params.delete('toCity')
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [selectedCountryCode, hoveredFeature, searchParams, pathname, router])
+
+  const handlePointClick = useCallback(
+    (point: object) => {
+      const airport = point as CountryAirport
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('to', airport.iata)
+      params.set('toCity', airport.iata)
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [searchParams, pathname, router],
+  )
 
   const tooltipData = useMemo((): TooltipData | null => {
     if (!hoveredFeature || !heatmap) return null
@@ -267,7 +376,6 @@ export default function Globe({ origin }: Props) {
 
   return (
     <div ref={containerRef} className="w-full h-full relative bg-[#FAFAFA] overflow-hidden">
-      {/* Loading skeleton */}
       {isLoading ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10 pointer-events-none">
           <div className="w-10 h-10 border-[3px] border-[#2B5BE0] border-t-transparent rounded-full animate-spin" />
@@ -275,7 +383,6 @@ export default function Globe({ origin }: Props) {
         </div>
       ) : null}
 
-      {/* Empty state */}
       {isEmpty ? (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <div className="bg-white/90 backdrop-blur-sm rounded-2xl px-6 py-5 shadow-md border border-[#E5E7EB] max-w-xs text-center">
@@ -287,7 +394,6 @@ export default function Globe({ origin }: Props) {
         </div>
       ) : null}
 
-      {/* Globe canvas — only mount when container has measured dimensions */}
       {dimensions.width > 0 && dimensions.height > 0 ? (
         <GlobeGL
           ref={globeRef as React.MutableRefObject<GlobeMethods | undefined>}
@@ -306,24 +412,36 @@ export default function Globe({ origin }: Props) {
           polygonsTransitionDuration={200}
           onPolygonHover={handlePolygonHover}
           onPolygonClick={handlePolygonClick}
+          onGlobeClick={handleGlobeClick}
           onGlobeReady={handleGlobeReady}
           showPointerCursor
+          pointsData={countryAirports}
+          pointLat={(p) => (p as CountryAirport).lat}
+          pointLng={(p) => (p as CountryAirport).lon}
+          pointAltitude={0.01}
+          pointRadius={0.35}
+          pointColor={(p) =>
+            (p as CountryAirport).iata === selectedIata ? '#2B5BE0' : '#FFFFFF'
+          }
+          pointLabel={(p) => {
+            const ap = p as CountryAirport
+            return `<div style="background:rgba(15,15,35,0.82);padding:4px 10px;border-radius:6px;color:#fff;font-size:12px;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata} · ${ap.city}</div>`
+          }}
+          onPointClick={handlePointClick}
+          pointsTransitionDuration={400}
         />
       ) : null}
 
-      {/* Live pulse */}
       {heatmap ? (
         <div className="absolute bottom-4 left-4 flex items-center gap-1.5 bg-white/80 backdrop-blur-sm border border-[#E5E7EB] rounded-full px-3 py-1.5 text-[11px] text-gray-500 select-none pointer-events-none">
           <span className="relative flex h-2 w-2 flex-shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22C55E] opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#22C55E]" />
           </span>
-          {/* key={tick} forces re-render so relativeTime updates */}
           <span key={tick}>Updated {relativeTime(heatmap.computedAt)}</span>
         </div>
       ) : null}
 
-      {/* Price legend — bottom-right, only when heatmap has data */}
       {legendData ? (
         <div className="absolute bottom-4 right-4 pointer-events-none select-none">
           <div
@@ -341,7 +459,6 @@ export default function Globe({ origin }: Props) {
         </div>
       ) : null}
 
-      {/* Hover tooltip — fixed position follows cursor */}
       <Tooltip data={hoveredFeature ? tooltipData : null} x={mousePos.x} y={mousePos.y} />
     </div>
   )

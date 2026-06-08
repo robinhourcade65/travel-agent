@@ -16,5 +16,13 @@ const GlobeInner = dynamic(() => import('./Globe'), {
 export default function GlobeWrapper() {
   const searchParams = useSearchParams()
   const origin = searchParams.get('from') ?? 'DUB'
-  return <GlobeInner origin={origin} />
+  const selectedCountryCode = searchParams.get('toCountry') ?? null
+  const selectedIata = searchParams.get('to') ?? null
+  return (
+    <GlobeInner
+      origin={origin}
+      selectedCountryCode={selectedCountryCode}
+      selectedIata={selectedIata}
+    />
+  )
 }

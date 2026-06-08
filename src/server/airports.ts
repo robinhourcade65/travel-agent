@@ -37,3 +37,43 @@ export async function searchAirports(query: string): Promise<AirportResult[]> {
 
   return fallback ?? []
 }
+
+export type CountryAirport = {
+  iata: string
+  city: string
+  lat: number
+  lon: number
+}
+
+export async function searchAirportsByCountry(countryCode: string): Promise<CountryAirport[]> {
+  const admin = createAdminClient()
+
+  const { data: major } = await admin
+    .from('airports')
+    .select('iata, city, lat, lon')
+    .eq('country_code', countryCode)
+    .eq('duffel_supported', true)
+    .eq('is_major', true)
+    .order('iata')
+
+  if (major && major.length > 0) return major as CountryAirport[]
+
+  const { data: fallback } = await admin
+    .from('airports')
+    .select('iata, city, lat, lon')
+    .eq('country_code', countryCode)
+    .eq('duffel_supported', true)
+    .order('iata')
+
+  return (fallback ?? []) as CountryAirport[]
+}
+
+export async function getAirportInfo(iata: string): Promise<{ iata: string; city: string } | null> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('airports')
+    .select('iata, city')
+    .eq('iata', iata)
+    .maybeSingle()
+  return data as { iata: string; city: string } | null
+}
