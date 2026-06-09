@@ -170,3 +170,11 @@
   from { opacity: 0 }
   to   { opacity: 1 }
 }
+
+/* react-globe.gl wraps pointLabel HTML in .float-tooltip-kap which has its own dark bg/padding.
+   We provide all visual styling in our pointLabel div, so strip the container to prevent ghost rectangles. */
+.float-tooltip-kap {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}

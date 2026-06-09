@@ -450,6 +450,18 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           }}
           onPointClick={handlePointClick}
           pointsTransitionDuration={400}
+          htmlElementsData={countryAirports}
+          htmlLat={(d) => (d as CountryAirport).lat}
+          htmlLng={(d) => (d as CountryAirport).lon}
+          htmlAltitude={0.021}
+          htmlTransitionDuration={400}
+          htmlElement={(d) => {
+            const ap = d as CountryAirport
+            const el = document.createElement('div')
+            el.textContent = ap.iata
+            el.style.cssText = 'color:#fff;font-size:9px;font-weight:700;font-family:system-ui,sans-serif;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;user-select:none;'
+            return el
+          }}
         />
       ) : null}
 
