@@ -49,7 +49,14 @@ export default function FlightList({ state }: Props) {
     if (sort === 'price') {
       return [...state.offers].sort((a, b) => a.priceMinor - b.priceMinor)
     }
-    // Duration and departure sort stubs — Phase C
+    if (sort === 'duration') {
+      return [...state.offers].sort((a, b) => a.durationMinutes - b.durationMinutes)
+    }
+    if (sort === 'departure') {
+      return [...state.offers].sort(
+        (a, b) => new Date(a.departAt).getTime() - new Date(b.departAt).getTime(),
+      )
+    }
     return state.offers
   }, [state, sort])
 

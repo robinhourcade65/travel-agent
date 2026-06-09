@@ -398,7 +398,11 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-[#FAFAFA] overflow-hidden">
+    <div
+      ref={containerRef}
+      className="w-full h-full relative bg-[#FAFAFA] overflow-hidden"
+      onMouseLeave={() => setHoveredFeature(null)}
+    >
       {isLoading ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10 pointer-events-none">
           <div className="w-10 h-10 border-[3px] border-[#2B5BE0] border-t-transparent rounded-full animate-spin" />

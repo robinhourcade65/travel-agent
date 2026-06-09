@@ -38,7 +38,7 @@ export default async function Page() {
       </div>
 
       {/* Right panel — desktop only */}
-      <aside className="hidden md:flex md:w-80 md:flex-shrink-0 border-l border-[#E5E7EB] bg-white flex-col overflow-hidden">
+      <aside className="hidden md:flex md:w-80 md:flex-shrink-0 border-l border-[#E5E7EB] bg-white flex-col overflow-hidden relative z-10">
         <Suspense fallback={<PanelSkeleton />}>
           <RightPanel />
         </Suspense>
