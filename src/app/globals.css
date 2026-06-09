@@ -165,3 +165,8 @@
 .react-datepicker__triangle {
   display: none;
 }
+
+@keyframes tooltip-city-fade {
+  from { opacity: 0 }
+  to   { opacity: 1 }
+}

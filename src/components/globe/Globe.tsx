@@ -446,10 +446,22 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           pointColor={() => '#2B5BE0'}
           pointLabel={(p) => {
             const ap = p as CountryAirport
-            return `<div style="background:rgba(15,15,35,0.82);padding:4px 10px;border-radius:6px;color:#fff;font-size:12px;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata} · ${ap.city}</div>`
+            return `<div style="background:rgba(15,23,42,0.92);padding:3px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:500;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata}<span style="animation:tooltip-city-fade 0.3s ease 0.3s both"> · ${ap.city}</span></div>`
           }}
           onPointClick={handlePointClick}
           pointsTransitionDuration={400}
+          htmlElementsData={countryAirports}
+          htmlLat={(d) => (d as CountryAirport).lat}
+          htmlLng={(d) => (d as CountryAirport).lon}
+          htmlAltitude={0.006}
+          htmlTransitionDuration={400}
+          htmlElement={(d) => {
+            const ap = d as CountryAirport
+            const el = document.createElement('div')
+            el.textContent = ap.iata
+            el.style.cssText = 'color:#fff;font-size:10px;font-weight:500;font-family:system-ui,sans-serif;text-shadow:0 1px 2px rgba(0,0,0,0.6);transform:translate(8px,-50%);pointer-events:none;white-space:nowrap;'
+            return el
+          }}
         />
       ) : null}
 
