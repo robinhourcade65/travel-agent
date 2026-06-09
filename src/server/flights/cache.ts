@@ -29,10 +29,11 @@ function computeTTL(departDate: string): Date {
 }
 
 function rowToOffer(row: Record<string, unknown>): FlightOffer {
-  const departAt = `${row.depart_date}T00:00:00`;
+  const departAt = row.depart_at ? String(row.depart_at) : `${row.depart_date}T00:00:00`;
   const durationMinutes = Number(row.duration_minutes ?? 0);
-  const arriveAt =
-    durationMinutes > 0
+  const arriveAt = row.arrive_at
+    ? String(row.arrive_at)
+    : durationMinutes > 0
       ? new Date(new Date(departAt).getTime() + durationMinutes * 60_000).toISOString()
       : departAt;
   return {
@@ -159,6 +160,8 @@ async function fetchAndStore(params: {
     airline_iata: offer.airlineIata || null,
     stops: offer.stops,
     duration_minutes: offer.durationMinutes || null,
+    depart_at: offer.departAt,
+    arrive_at: offer.arriveAt,
     deeplink: offer.deeplink,
     source: 'duffel',
     expires_at: expiresAt,
