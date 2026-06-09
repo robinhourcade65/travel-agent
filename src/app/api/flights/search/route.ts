@@ -14,7 +14,7 @@ type RateLimitEntry = { count: number; resetAt: number };
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 function getLimit(userId?: string): number {
-  if (!userId) return 10;   // anonymous
+  if (!userId) return 50;   // anonymous — TODO: revert to 10 before launch (matches plan file 09 tier limits)
   return 50;                // authenticated free (pro → 500, added in 09_billing.md)
 }
 
