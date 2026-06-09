@@ -29,6 +29,9 @@ function computeTTL(departDate: string): Date {
 }
 
 function rowToOffer(row: Record<string, unknown>): FlightOffer {
+  if (!row.depart_at) {
+    console.warn('[cache] legacy row missing depart_at, using midnight fallback for', row.id);
+  }
   const departAt = row.depart_at ? String(row.depart_at) : `${row.depart_date}T00:00:00`;
   const durationMinutes = Number(row.duration_minutes ?? 0);
   const arriveAt = row.arrive_at
