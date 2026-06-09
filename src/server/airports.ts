@@ -1,6 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { COUNTRY_HUBS } from '@/lib/flights/country-hubs'
 
 export type AirportResult = {
   iata: string
@@ -49,8 +50,33 @@ export async function searchAirportsByCountry(countryCode: string): Promise<Coun
   const admin = createAdminClient()
   console.time(`city-pins-fetch:${countryCode}`)
 
-  // Single query: major airports ranked first, capped at 5 pins per country.
-  // No two-query fallback needed — is_major DESC naturally surfaces majors first.
+  const hubIata = COUNTRY_HUBS[countryCode]
+
+  // If the country has a known hub, fetch it first then fill up to 4 more.
+  if (hubIata) {
+    const [{ data: hubRows }, { data: restRows }] = await Promise.all([
+      admin
+        .from('airports')
+        .select('iata, city, lat, lon')
+        .eq('iata', hubIata)
+        .eq('duffel_supported', true)
+        .limit(1),
+      admin
+        .from('airports')
+        .select('iata, city, lat, lon')
+        .eq('country_code', countryCode)
+        .eq('duffel_supported', true)
+        .neq('iata', hubIata)
+        .order('is_major', { ascending: false })
+        .order('iata', { ascending: true })
+        .limit(4),
+    ])
+
+    console.timeEnd(`city-pins-fetch:${countryCode}`)
+    return [...(hubRows ?? []), ...(restRows ?? [])] as CountryAirport[]
+  }
+
+  // No hub entry: fall back to is_major DESC ranking.
   const { data } = await admin
     .from('airports')
     .select('iata, city, lat, lon')

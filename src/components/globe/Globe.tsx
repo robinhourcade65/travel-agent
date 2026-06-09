@@ -441,8 +441,8 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           pointsData={countryAirports}
           pointLat={(p) => (p as CountryAirport).lat}
           pointLng={(p) => (p as CountryAirport).lon}
-          pointAltitude={0.005}
-          pointRadius={(p) => (p as CountryAirport).iata === selectedIata ? 0.55 : 0.35}
+          pointAltitude={0.02}
+          pointRadius={(p) => (p as CountryAirport).iata === selectedIata ? 0.85 : 0.6}
           pointColor={() => '#2B5BE0'}
           pointLabel={(p) => {
             const ap = p as CountryAirport
@@ -453,7 +453,7 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           htmlElementsData={countryAirports}
           htmlLat={(d) => (d as CountryAirport).lat}
           htmlLng={(d) => (d as CountryAirport).lon}
-          htmlAltitude={0.006}
+          htmlAltitude={0.022}
           htmlTransitionDuration={400}
           htmlElement={(d) => {
             const ap = d as CountryAirport
