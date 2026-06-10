@@ -625,7 +625,7 @@ export default function Globe({
               ap.priceMinor != null
                 ? `<div style="margin-top:1px;font-size:11px;font-weight:600;animation:tooltip-city-fade 0.3s ease 0.3s both">${formatPrice(ap.priceMinor, ap.currency ?? 'EUR')}</div>`
                 : ''
-            return `<div style="transform:translate(10px,calc(-100% - 10px));display:inline-block;background:rgba(15,23,42,0.92);padding:3px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:500;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata}<span style="animation:tooltip-city-fade 0.3s ease 0.3s both"> · ${ap.city}</span>${priceLine}</div>`
+            return `<div style="display:inline-block;background:rgba(15,23,42,0.92);padding:3px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:500;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata}<span style="animation:tooltip-city-fade 0.3s ease 0.3s both"> · ${ap.city}</span>${priceLine}</div>`
           }}
           onPointClick={handlePointClick}
           pointsTransitionDuration={400}
