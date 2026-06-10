@@ -90,6 +90,57 @@ export async function searchAirportsByCountry(countryCode: string): Promise<Coun
   return (data ?? []) as CountryAirport[]
 }
 
+export type CountryAirportPrice = CountryAirport & {
+  priceMinor: number | null
+  currency: string | null
+}
+
+// City pins for a country, each annotated with its indicative price for `month`.
+// Reuses searchAirportsByCountry for the curated 5-airport ranking, then left-joins
+// airport_indicative_prices (origin + month) in memory so the pins shown stay exactly
+// the same 5 we render today — airports with no seeded price get priceMinor: null.
+//
+// `month` MUST be a first-of-month YYYY-MM-DD key (same format the seeder writes to
+// airport_indicative_prices.month). A mismatch silently yields zero price rows, so we
+// log a warning when a country with pins comes back with no prices at all.
+export async function searchAirportPricesByCountry(
+  origin: string,
+  countryCode: string,
+  month: string,
+): Promise<CountryAirportPrice[]> {
+  const airports = await searchAirportsByCountry(countryCode)
+  if (airports.length === 0) return []
+
+  const admin = createAdminClient()
+  const { data: priceRows } = await admin
+    .from('airport_indicative_prices')
+    .select('dest_iata, price_minor, currency')
+    .eq('origin', origin)
+    .eq('month', month)
+    .in('dest_iata', airports.map((a) => a.iata))
+
+  const priceByIata = new Map(
+    (priceRows ?? []).map((r) => [r.dest_iata, { priceMinor: r.price_minor, currency: r.currency }]),
+  )
+
+  if (priceByIata.size === 0) {
+    console.warn(
+      `[airports] No airport prices for ${origin}→${countryCode} month=${month} ` +
+        `(${airports.length} pins). If the seed has run, check the month key format ` +
+        `matches airport_indicative_prices.month (first-of-month YYYY-MM-DD).`,
+    )
+  }
+
+  return airports.map((a) => {
+    const price = priceByIata.get(a.iata)
+    return {
+      ...a,
+      priceMinor: price?.priceMinor ?? null,
+      currency: price?.currency ?? null,
+    }
+  })
+}
+
 export async function getAirportInfo(iata: string): Promise<{ iata: string; city: string } | null> {
   const admin = createAdminClient()
   const { data } = await admin

@@ -6,7 +6,7 @@ import GlobeGL, { type GlobeMethods } from 'react-globe.gl'
 import { MeshPhongMaterial, Color, AmbientLight, DirectionalLight } from 'three'
 import Tooltip, { type TooltipData } from './Tooltip'
 import ContinentFilter from './ContinentFilter'
-import { searchAirportsByCountry, type CountryAirport } from '@/server/airports'
+import { searchAirportPricesByCountry, type CountryAirportPrice } from '@/server/airports'
 import {
   continentOf,
   resolveContinentSelection,
@@ -99,6 +99,41 @@ function formatPrice(minor: number, currency: string): string {
   }).format(minor / 100)
 }
 
+// First day of next month as YYYY-MM-DD (UTC). MUST match the format the seeder
+// writes to airport_indicative_prices.month — see refreshIndicativePrices /
+// nextThreeMonths (offset 1) and the heatmap route's defaultMonthKey. A mismatch
+// makes searchAirportPricesByCountry return no prices and every pin shows as no-data.
+function nextMonthKey(): string {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+    .toISOString()
+    .slice(0, 10)
+}
+
+const PIN_DEFAULT_COLOR = '#2B5BE0'
+
+// Within-country pin colors: rescale the blue→yellow→red gradient across only this
+// country's seeded prices, so the cheapest gateway reads as deep blue and the priciest
+// as red regardless of the global scale. Airports with no price are omitted (callers
+// fall back to PIN_DEFAULT_COLOR). When all priced airports share one price (range 0),
+// they render at the gradient midpoint rather than collapsing to an extreme.
+function buildPinColorMap(airports: CountryAirportPrice[]): Map<string, string> {
+  const map = new Map<string, string>()
+  const priced = airports.filter((a) => a.priceMinor != null)
+  if (priced.length === 0) return map
+
+  const prices = priced.map((a) => a.priceMinor as number)
+  const min = Math.min(...prices)
+  const max = Math.max(...prices)
+  const range = max - min
+
+  for (const a of priced) {
+    const t = range === 0 ? 0.5 : ((a.priceMinor as number) - min) / range
+    map.set(a.iata, priceToColor(t))
+  }
+  return map
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return '—'
   const diffMins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
@@ -178,8 +213,11 @@ export default function Globe({
   const [hoveredFeature, setHoveredFeature] = useState<GeoFeature | null>(null)
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
   const [tick, setTick] = useState(0)
-  const [countryAirports, setCountryAirports] = useState<CountryAirport[]>([])
+  const [countryAirports, setCountryAirports] = useState<CountryAirportPrice[]>([])
   const [globeReady, setGlobeReady] = useState(false)
+
+  // Month whose prices the city pins reflect — the same default month the heatmap uses.
+  const monthKey = useMemo(nextMonthKey, [])
 
   const globeMaterial = useMemo(
     () =>
@@ -247,11 +285,11 @@ export default function Globe({
     globeRef.current.controls().autoRotate = false
 
     let cancelled = false
-    searchAirportsByCountry(selectedCountryCode)
+    searchAirportPricesByCountry(origin, selectedCountryCode, monthKey)
       .then((airports) => { if (!cancelled) setCountryAirports(airports) })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [selectedCountryCode, geoFeatures, globeReady])
+  }, [selectedCountryCode, geoFeatures, globeReady, origin, monthKey])
 
   // Effect B — continent zoom: focus a single continent, or zoom back out to world for
   // multi-select / World. Skipped entirely while a country is drilled into, so the filter never
@@ -372,6 +410,9 @@ export default function Globe({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatmap, continentKey, isWorldView])
 
+  // Pin colors rescaled within the selected country's pool (cheapest = blue, priciest = red).
+  const pinColorMap = useMemo(() => buildPinColorMap(countryAirports), [countryAirports])
+
   const resetInactivity = useCallback(() => {
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current)
     if (globeRef.current) globeRef.current.controls().autoRotate = false
@@ -482,7 +523,7 @@ export default function Globe({
 
   const handlePointClick = useCallback(
     (point: object) => {
-      const airport = point as CountryAirport
+      const airport = point as CountryAirportPrice
       const params = new URLSearchParams(searchParams.toString())
       params.set('to', airport.iata)
       params.set('toCity', airport.iata)
@@ -573,24 +614,28 @@ export default function Globe({
           onGlobeReady={handleGlobeReady}
           showPointerCursor
           pointsData={countryAirports}
-          pointLat={(p) => (p as CountryAirport).lat}
-          pointLng={(p) => (p as CountryAirport).lon}
+          pointLat={(p) => (p as CountryAirportPrice).lat}
+          pointLng={(p) => (p as CountryAirportPrice).lon}
           pointAltitude={0.02}
-          pointRadius={(p) => (p as CountryAirport).iata === selectedIata ? 0.85 : 0.6}
-          pointColor={() => '#2B5BE0'}
+          pointRadius={(p) => (p as CountryAirportPrice).iata === selectedIata ? 0.85 : 0.6}
+          pointColor={(p) => pinColorMap.get((p as CountryAirportPrice).iata) ?? PIN_DEFAULT_COLOR}
           pointLabel={(p) => {
-            const ap = p as CountryAirport
-            return `<div style="transform:translate(10px,calc(-100% - 10px));display:inline-block;background:rgba(15,23,42,0.92);padding:3px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:500;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata}<span style="animation:tooltip-city-fade 0.3s ease 0.3s both"> · ${ap.city}</span></div>`
+            const ap = p as CountryAirportPrice
+            const priceLine =
+              ap.priceMinor != null
+                ? `<div style="margin-top:1px;font-size:11px;font-weight:600;animation:tooltip-city-fade 0.3s ease 0.3s both">${formatPrice(ap.priceMinor, ap.currency ?? 'EUR')}</div>`
+                : ''
+            return `<div style="transform:translate(10px,calc(-100% - 10px));display:inline-block;background:rgba(15,23,42,0.92);padding:3px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:500;font-family:system-ui,sans-serif;white-space:nowrap;pointer-events:none">${ap.iata}<span style="animation:tooltip-city-fade 0.3s ease 0.3s both"> · ${ap.city}</span>${priceLine}</div>`
           }}
           onPointClick={handlePointClick}
           pointsTransitionDuration={400}
           htmlElementsData={countryAirports}
-          htmlLat={(d) => (d as CountryAirport).lat}
-          htmlLng={(d) => (d as CountryAirport).lon}
+          htmlLat={(d) => (d as CountryAirportPrice).lat}
+          htmlLng={(d) => (d as CountryAirportPrice).lon}
           htmlAltitude={0.021}
           htmlTransitionDuration={400}
           htmlElement={(d) => {
-            const ap = d as CountryAirport
+            const ap = d as CountryAirportPrice
             const el = document.createElement('div')
             el.textContent = ap.iata
             el.style.cssText = 'color:#fff;font-size:9px;font-weight:700;font-family:system-ui,sans-serif;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;user-select:none;'
