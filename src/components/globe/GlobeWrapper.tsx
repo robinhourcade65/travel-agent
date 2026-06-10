@@ -18,11 +18,20 @@ export default function GlobeWrapper() {
   const origin = searchParams.get('from') ?? 'DUB'
   const selectedCountryCode = searchParams.get('toCountry') ?? null
   const selectedIata = searchParams.get('to') ?? null
+
+  // continents=eu,as (comma-separated lowercase). Empty/absent → World default.
+  const continentsParam = searchParams.get('continents')
+  const selectedContinents = continentsParam
+    ? continentsParam.split(',').map((c) => c.trim().toLowerCase()).filter(Boolean)
+    : []
+  const normalizedContinents = selectedContinents.length > 0 ? selectedContinents : ['world']
+
   return (
     <GlobeInner
       origin={origin}
       selectedCountryCode={selectedCountryCode}
       selectedIata={selectedIata}
+      selectedContinents={normalizedContinents}
     />
   )
 }

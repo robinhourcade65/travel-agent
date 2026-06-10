@@ -5,7 +5,13 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import GlobeGL, { type GlobeMethods } from 'react-globe.gl'
 import { MeshPhongMaterial, Color, AmbientLight, DirectionalLight } from 'three'
 import Tooltip, { type TooltipData } from './Tooltip'
+import ContinentFilter from './ContinentFilter'
 import { searchAirportsByCountry, type CountryAirport } from '@/server/airports'
+import {
+  continentOf,
+  resolveContinentSelection,
+  CONTINENT_CENTERS,
+} from '@/lib/continents'
 
 type HeatmapEntry = {
   countryCode: string
@@ -31,12 +37,16 @@ type Props = {
   origin: string
   selectedCountryCode: string | null
   selectedIata: string | null
+  selectedContinents: string[]
 }
 
 const NO_DATA_COLOR = '#F5F5F4'
 const STROKE_COLOR = '#D1D5DB'
 const HOVER_ALTITUDE = 0.018
 const BASE_ALTITUDE = 0.006
+// Background of the globe canvas — non-selected countries blend toward this to read as ~30% opacity.
+const BACKGROUND_RGB: [number, number, number] = [250, 250, 250] // #FAFAFA
+const FADE_AMOUNT = 0.7 // blend 70% toward background ≈ 30% opacity
 
 function lerpRgb(
   a: [number, number, number],
@@ -54,11 +64,23 @@ const BLUE: [number, number, number] = [59, 130, 246]
 const YELLOW: [number, number, number] = [251, 191, 36]
 const RED: [number, number, number] = [239, 68, 68]
 
-function priceToColor(t: number): string {
+function priceToRgb(t: number): [number, number, number] {
   const c = Math.max(0, Math.min(1, t))
-  const [r, g, b] =
-    c <= 0.5 ? lerpRgb(BLUE, YELLOW, c * 2) : lerpRgb(YELLOW, RED, (c - 0.5) * 2)
+  return c <= 0.5 ? lerpRgb(BLUE, YELLOW, c * 2) : lerpRgb(YELLOW, RED, (c - 0.5) * 2)
+}
+
+function rgbString([r, g, b]: [number, number, number]): string {
   return `rgb(${r},${g},${b})`
+}
+
+function priceToColor(t: number): string {
+  return rgbString(priceToRgb(t))
+}
+
+// Blend a color toward the canvas background so faded (non-selected) countries read as ~30% opacity
+// without relying on WebGL alpha (react-globe.gl polygon cap meshes drop the alpha channel).
+function fadeToBackground(rgb: [number, number, number]): string {
+  return rgbString(lerpRgb(rgb, BACKGROUND_RGB, FADE_AMOUNT))
 }
 
 function resolveIso(props: Record<string, string>): string | null {
@@ -133,7 +155,12 @@ function altitudeForArea(area: number): number {
   return Math.max(0.5, Math.min(1.5, Math.sqrt(area) / 30))
 }
 
-export default function Globe({ origin, selectedCountryCode, selectedIata }: Props) {
+export default function Globe({
+  origin,
+  selectedCountryCode,
+  selectedIata,
+  selectedContinents,
+}: Props) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -163,6 +190,10 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
       }),
     [],
   )
+
+  // Stable dependency key for the (newly-created-each-render) selectedContinents array.
+  const continentKey = selectedContinents.join(',')
+  const isWorldView = selectedContinents.includes('world')
 
   useEffect(() => {
     selectedCountryCodeRef.current = selectedCountryCode
@@ -198,29 +229,53 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
       .catch(() => setLoadError(true))
   }, [origin])
 
-  // Globe tilt animation + city pin fetch when focused country changes
+  // Effect A — country focus: zoom to the clicked country + fetch its city pins.
+  // Owns the camera while a country is selected; clears pins when none is.
   useEffect(() => {
     if (!globeReady || !globeRef.current) return
 
-    if (selectedCountryCode) {
-      const feature = geoFeatures?.find((f) => resolveIso(f.properties) === selectedCountryCode)
-      if (feature) {
-        const { lat, lng, area } = getFeatureBounds(feature.geometry)
-        globeRef.current.pointOfView({ lat, lng, altitude: altitudeForArea(area) }, 1200)
-      }
-      globeRef.current.controls().autoRotate = false
-
-      let cancelled = false
-      searchAirportsByCountry(selectedCountryCode)
-        .then((airports) => { if (!cancelled) setCountryAirports(airports) })
-        .catch(console.error)
-      return () => { cancelled = true }
-    } else {
-      globeRef.current.pointOfView({ lat: 20, lng: 0, altitude: 2.5 }, 800)
-      globeRef.current.controls().autoRotate = true
+    if (!selectedCountryCode) {
       setCountryAirports([])
+      return
     }
+
+    const feature = geoFeatures?.find((f) => resolveIso(f.properties) === selectedCountryCode)
+    if (feature) {
+      const { lat, lng, area } = getFeatureBounds(feature.geometry)
+      globeRef.current.pointOfView({ lat, lng, altitude: altitudeForArea(area) }, 1200)
+    }
+    globeRef.current.controls().autoRotate = false
+
+    let cancelled = false
+    searchAirportsByCountry(selectedCountryCode)
+      .then((airports) => { if (!cancelled) setCountryAirports(airports) })
+      .catch(console.error)
+    return () => { cancelled = true }
   }, [selectedCountryCode, geoFeatures, globeReady])
+
+  // Effect B — continent zoom: focus a single continent, or zoom back out to world for
+  // multi-select / World. Skipped entirely while a country is drilled into, so the filter never
+  // yanks the camera away from a focused country (it re-fires when that country is deselected).
+  useEffect(() => {
+    if (!globeReady || !globeRef.current) return
+    if (selectedCountryCode) return
+
+    const focusKey =
+      selectedContinents.length === 1 && selectedContinents[0] !== 'world'
+        ? selectedContinents[0]
+        : 'world'
+    const target = CONTINENT_CENTERS[focusKey] ?? CONTINENT_CENTERS.world
+
+    globeRef.current.pointOfView(target, 1200)
+    globeRef.current.controls().autoRotate = false
+    const id = setTimeout(() => {
+      if (globeRef.current && !selectedCountryCodeRef.current) {
+        globeRef.current.controls().autoRotate = true
+      }
+    }, 1200)
+    return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continentKey, globeReady, selectedCountryCode])
 
   // ESC key → return to world view
   useEffect(() => {
@@ -237,22 +292,72 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
     return () => window.removeEventListener('keydown', handler)
   }, [selectedCountryCode, searchParams, pathname, router])
 
-  // Color map: countryCode → hex
+  // Country count with heatmap data per continent — drives the chip labels, e.g. Europe (45).
+  const continentCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    if (!heatmap) return counts
+    for (const r of heatmap.results) {
+      const cont = continentOf(r.countryCode)
+      if (cont) counts[cont] = (counts[cont] ?? 0) + 1
+    }
+    return counts
+  }, [heatmap])
+
+  // Color map: countryCode → color string.
+  // World view → global min/max gradient. Continent-filtered → gradient stretched across only the
+  // selected continents' prices; countries outside the selection keep their world-scale color but
+  // blended toward the background so they read as faded-but-visible (~30% opacity).
   const colorMap = useMemo(() => {
     const map = new Map<string, string>()
     if (!heatmap || heatmap.results.length === 0) return map
-    const prices = heatmap.results.map((r) => r.priceMinor)
-    const minP = Math.min(...prices)
-    const range = Math.max(...prices) - minP || 1
+
+    const allPrices = heatmap.results.map((r) => r.priceMinor)
+    const worldMin = Math.min(...allPrices)
+    const worldRange = Math.max(...allPrices) - worldMin || 1
+
+    let selMin = worldMin
+    let selRange = worldRange
+    if (!isWorldView) {
+      const selPrices = heatmap.results
+        .filter((r) => {
+          const cont = continentOf(r.countryCode)
+          return cont != null && selectedContinents.includes(cont)
+        })
+        .map((r) => r.priceMinor)
+      if (selPrices.length > 0) {
+        selMin = Math.min(...selPrices)
+        selRange = Math.max(...selPrices) - selMin || 1
+      }
+    }
+
     for (const entry of heatmap.results) {
-      map.set(entry.countryCode, priceToColor((entry.priceMinor - minP) / range))
+      const cont = continentOf(entry.countryCode)
+      const inSelection = isWorldView || (cont != null && selectedContinents.includes(cont))
+      if (inSelection) {
+        const t = isWorldView
+          ? (entry.priceMinor - worldMin) / worldRange
+          : (entry.priceMinor - selMin) / selRange
+        map.set(entry.countryCode, priceToColor(t))
+      } else {
+        const worldRgb = priceToRgb((entry.priceMinor - worldMin) / worldRange)
+        map.set(entry.countryCode, fadeToBackground(worldRgb))
+      }
     }
     return map
-  }, [heatmap])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmap, continentKey, isWorldView])
 
+  // Legend reflects whichever scale is in use — global, or just the selected continents.
   const legendData = useMemo(() => {
     if (!heatmap || heatmap.results.length === 0) return null
-    const sorted = [...heatmap.results].sort((a, b) => a.priceMinor - b.priceMinor)
+    const filtered = isWorldView
+      ? heatmap.results
+      : heatmap.results.filter((r) => {
+          const cont = continentOf(r.countryCode)
+          return cont != null && selectedContinents.includes(cont)
+        })
+    const source = filtered.length > 0 ? filtered : heatmap.results
+    const sorted = [...source].sort((a, b) => a.priceMinor - b.priceMinor)
     const mid = Math.floor(sorted.length / 2)
     const medianMinor =
       sorted.length % 2 !== 0
@@ -264,7 +369,8 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
       median: formatPrice(medianMinor, currency),
       max: formatPrice(sorted[sorted.length - 1].priceMinor, currency),
     }
-  }, [heatmap])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmap, continentKey, isWorldView])
 
   const resetInactivity = useCallback(() => {
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current)
@@ -347,6 +453,22 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
     [heatmap, searchParams, pathname, router],
   )
 
+  // Continent chip click → apply toggle rules and write the `continents` URL param.
+  // World (the default) is represented by an absent param to keep clean URLs.
+  const handleContinentSelect = useCallback(
+    (key: string) => {
+      const next = resolveContinentSelection(selectedContinents, key)
+      const params = new URLSearchParams(searchParams.toString())
+      if (next.length === 1 && next[0] === 'world') {
+        params.delete('continents')
+      } else {
+        params.set('continents', next.join(','))
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [selectedContinents, searchParams, pathname, router],
+  )
+
   // Ocean click → return to world view
   const handleGlobeClick = useCallback(() => {
     if (!selectedCountryCode || hoveredFeature) return
@@ -421,6 +543,14 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
         </div>
       ) : null}
 
+      {!isLoading && !isEmpty ? (
+        <ContinentFilter
+          counts={continentCounts}
+          selected={selectedContinents}
+          onSelect={handleContinentSelect}
+        />
+      ) : null}
+
       {dimensions.width > 0 && dimensions.height > 0 ? (
         <GlobeGL
           ref={globeRef as React.MutableRefObject<GlobeMethods | undefined>}
@@ -436,7 +566,7 @@ export default function Globe({ origin, selectedCountryCode, selectedIata }: Pro
           polygonSideColor={getPolygonColor}
           polygonStrokeColor={() => STROKE_COLOR}
           polygonAltitude={getPolygonAltitude}
-          polygonsTransitionDuration={200}
+          polygonsTransitionDuration={400}
           onPolygonHover={handlePolygonHover}
           onPolygonClick={handlePolygonClick}
           onGlobeClick={handleGlobeClick}
