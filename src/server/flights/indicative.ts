@@ -106,25 +106,34 @@ export async function refreshIndicativePrices(
     throw new Error(`[indicative] Failed to load airports: ${apError?.message}`);
   }
 
-  // Build country → representative airport map
-  const repByCountry = new Map<string, string>();
+  // Build country → ranked airport list (up to AIRPORTS_PER_COUNTRY), mirroring
+  // searchAirportsByCountry: curated hub first, then is_major DESC, then iata ASC.
+  // The per-airport prices feed airport_indicative_prices (city-pin gradient);
+  // the cheapest of each list feeds indicative_prices (country heatmap, unchanged).
+  const AIRPORTS_PER_COUNTRY = 5;
+
+  const groupedByCountry = new Map<string, Array<{ iata: string; is_major: boolean }>>();
   for (const row of airportRows) {
-    const existing = repByCountry.get(row.country_code);
-    if (!existing) {
-      repByCountry.set(row.country_code, row.iata);
-    } else if (row.is_major) {
-      // Prefer is_major; among multiple majors keep alphabetically first
-      const existingIsMajor = airportRows.find((r) => r.iata === existing)?.is_major ?? false;
-      if (!existingIsMajor || row.iata < existing) {
-        repByCountry.set(row.country_code, row.iata);
-      }
-    }
+    const list = groupedByCountry.get(row.country_code) ?? [];
+    list.push({ iata: row.iata, is_major: row.is_major ?? false });
+    groupedByCountry.set(row.country_code, list);
   }
 
-  // Override with curated hubs. We query hub airports separately — without the
-  // duffel_supported filter — so the override always wins even if a hub was
-  // previously marked duffel_supported=false by an earlier failed run. If the
-  // hub is still broken, the 422 handler below will re-mark it and move on.
+  const airportsByCountry = new Map<string, string[]>();
+  for (const [countryCode, rows] of groupedByCountry) {
+    const ranked = rows
+      .sort((a, b) =>
+        a.is_major === b.is_major ? (a.iata < b.iata ? -1 : 1) : a.is_major ? -1 : 1,
+      )
+      .map((r) => r.iata);
+    airportsByCountry.set(countryCode, ranked.slice(0, AIRPORTS_PER_COUNTRY));
+  }
+
+  // Curated-hub override. We query hub airports separately — without the
+  // duffel_supported filter — so the hub leads its country's list even if it was
+  // previously marked duffel_supported=false by an earlier failed run (and so a
+  // country whose only viable gateway is the hub still gets seeded). If the hub
+  // is still broken, the 422 handler below re-marks it and moves on.
   const hubIatas = Object.values(COUNTRY_HUBS);
   const { data: hubRows } = await admin
     .from('airports')
@@ -132,14 +141,18 @@ export async function refreshIndicativePrices(
     .in('iata', hubIatas);
   const hubIataSet = new Set((hubRows ?? []).map((r) => r.iata));
   for (const [countryCode, hubIata] of Object.entries(COUNTRY_HUBS)) {
-    if (hubIataSet.has(hubIata)) {
-      repByCountry.set(countryCode, hubIata);
-    }
+    if (!hubIataSet.has(hubIata)) continue;
+    if (countryCode === originCountry) continue; // never seed the origin country
+    const existing = airportsByCountry.get(countryCode) ?? [];
+    airportsByCountry.set(
+      countryCode,
+      [hubIata, ...existing.filter((i) => i !== hubIata)].slice(0, AIRPORTS_PER_COUNTRY),
+    );
   }
 
-  const countries = Array.from(repByCountry.entries()); // [countryCode, repIata]
+  const countries = Array.from(airportsByCountry.entries()); // [countryCode, iatas[]]
   const months = nextThreeMonths();
-  const estimate = countries.length * months.length;
+  const estimate = countries.reduce((sum, [, iatas]) => sum + iatas.length, 0) * months.length;
 
   // 3 — Estimate + guardrail
   console.log(
@@ -158,12 +171,14 @@ export async function refreshIndicativePrices(
   let timedOut = false;
   let countriesProcessed = 0;
 
-  // 4 — Main loop: country × month
-  outer: for (const [countryCode, repIata] of countries) {
-    let airportMarkedUnsupported = false;
+  // Airports confirmed dead (Duffel 422) during this run — skipped for all
+  // remaining months/countries so we don't re-hit the same invalid IATA.
+  const unsupportedThisRun = new Set<string>();
 
+  // 4 — Main loop: country × month × airport (top AIRPORTS_PER_COUNTRY per country)
+  outer: for (const [countryCode, iatas] of countries) {
     for (const { departDate, returnDate, monthKey } of months) {
-      // Soft time limit — checked before each Duffel call
+      // Soft time limit — checked before each country/month batch
       if (Date.now() - startTime > budget) {
         console.log(
           `[indicative] Budget exceeded (${Math.round((Date.now() - startTime) / 1000)}s). ` +
@@ -173,42 +188,102 @@ export async function refreshIndicativePrices(
         break outer;
       }
 
-      // Freshness check — skip if already computed recently
-      const { data: fresh } = await admin
-        .from('indicative_prices')
-        .select('computed_at')
-        .eq('origin', originIata)
-        .eq('destination_country', countryCode)
-        .eq('month', monthKey)
-        .maybeSingle();
+      // Per-airport prices for this country+month — fresh-from-DB or freshly fetched.
+      const collected: Array<{ iata: string; priceMinor: number; currency: string }> = [];
 
-      if (fresh && Date.now() - new Date(fresh.computed_at).getTime() < FRESH_MS) {
-        skipped++;
-        continue;
-      }
+      for (const iata of iatas) {
+        if (unsupportedThisRun.has(iata)) continue;
 
-      // Fetch (cache-first via getFlightOffers)
-      try {
-        const { offers } = await getFlightOffers({
-          origin: originIata,
-          destination: repIata,
-          departDate,
-          returnDate,
-        });
+        // Per-airport freshness — skip the Duffel call but reuse the stored price
+        // so the derived country row below stays correct on warm re-runs.
+        const { data: fresh } = await admin
+          .from('airport_indicative_prices')
+          .select('price_minor, currency, computed_at')
+          .eq('origin', originIata)
+          .eq('dest_iata', iata)
+          .eq('month', monthKey)
+          .maybeSingle();
 
-        if (offers.length === 0) {
-          // No offers for this route — skip without error
-          await sleep(SLEEP_MS);
+        if (fresh && Date.now() - new Date(fresh.computed_at).getTime() < FRESH_MS) {
+          collected.push({ iata, priceMinor: fresh.price_minor, currency: fresh.currency });
+          skipped++;
           continue;
         }
 
-        const cheapest = offers[0]; // already sorted ascending by price
+        // Fetch (cache-first via getFlightOffers)
+        try {
+          const { offers } = await getFlightOffers({
+            origin: originIata,
+            destination: iata,
+            departDate,
+            returnDate,
+          });
 
-        const { error: upsertError } = await admin.from('indicative_prices').upsert(
+          if (offers.length === 0) {
+            // No offers for this route — skip without error
+            await sleep(SLEEP_MS);
+            continue;
+          }
+
+          const cheapest = offers[0]; // already sorted ascending by price
+
+          const { error: upsertError } = await admin.from('airport_indicative_prices').upsert(
+            {
+              origin: originIata,
+              dest_iata: iata,
+              price_minor: cheapest.priceMinor,
+              currency: cheapest.currency,
+              month: monthKey,
+              computed_at: new Date().toISOString(),
+            },
+            { onConflict: 'origin,dest_iata,month' },
+          );
+
+          if (upsertError) {
+            console.error(
+              `[indicative] airport upsert error ${originIata}→${iata} ${monthKey}:`,
+              upsertError.message,
+            );
+            errors++;
+          } else {
+            collected.push({ iata, priceMinor: cheapest.priceMinor, currency: cheapest.currency });
+            pricesStored++;
+          }
+        } catch (err) {
+          errors++;
+
+          if (isDuffelInvalidIata(err)) {
+            // Confirmed Duffel 422 — airport not recognised by any airline partner.
+            // Mark it, then skip it for all remaining months (same dead airport).
+            console.error(
+              `[indicative] fetch error ${originIata}→${iata} (${countryCode}) ${departDate} [Duffel 422 — invalid IATA]:`,
+              err instanceof Error ? err.message : err,
+            );
+            await markAirportUnsupported(admin, iata);
+            unsupportedThisRun.add(iata);
+            continue;
+          }
+
+          // Any other error (network, 5xx, unexpected shape): log and continue.
+          // Never re-throw here — one bad route must not abort the whole seed run.
+          console.error(
+            `[indicative] fetch error ${originIata}→${iata} (${countryCode}) ${departDate}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+
+        await sleep(SLEEP_MS);
+      }
+
+      // Derive the country heatmap row from the cheapest of the collected airports.
+      // indicative_prices is unchanged in shape — this keeps the country heatmap intact.
+      if (collected.length > 0) {
+        const cheapest = collected.reduce((min, c) => (c.priceMinor < min.priceMinor ? c : min));
+        const { error: countryUpsertError } = await admin.from('indicative_prices').upsert(
           {
             origin: originIata,
             destination_country: countryCode,
-            cheapest_iata: repIata,
+            cheapest_iata: cheapest.iata,
             price_minor: cheapest.priceMinor,
             currency: cheapest.currency,
             month: monthKey,
@@ -216,42 +291,14 @@ export async function refreshIndicativePrices(
           },
           { onConflict: 'origin,destination_country,month' },
         );
-
-        if (upsertError) {
+        if (countryUpsertError) {
           console.error(
-            `[indicative] upsert error ${originIata}→${countryCode} ${monthKey}:`,
-            upsertError.message,
+            `[indicative] country upsert error ${originIata}→${countryCode} ${monthKey}:`,
+            countryUpsertError.message,
           );
           errors++;
-        } else {
-          pricesStored++;
         }
-      } catch (err) {
-        errors++;
-
-        if (isDuffelInvalidIata(err)) {
-          // Confirmed Duffel 422 — airport not recognised by any airline partner.
-          // Mark once then break: all months will fail for the same dead airport.
-          console.error(
-            `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate} [Duffel 422 — invalid IATA]:`,
-            err instanceof Error ? err.message : err,
-          );
-          if (!airportMarkedUnsupported) {
-            await markAirportUnsupported(admin, repIata);
-            airportMarkedUnsupported = true;
-          }
-          break;
-        }
-
-        // Any other error (network, 5xx, unexpected shape): log and continue.
-        // Never re-throw here — one bad route must not abort the whole seed run.
-        console.error(
-          `[indicative] fetch error ${originIata}→${repIata} (${countryCode}) ${departDate}:`,
-          err instanceof Error ? err.message : err,
-        );
       }
-
-      await sleep(SLEEP_MS);
     }
 
     countriesProcessed++;
