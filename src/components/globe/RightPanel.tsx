@@ -5,13 +5,16 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import type { FlightOffer } from '@/types/flights'
 import { getAirportInfo } from '@/server/airports'
 import { getCountryName } from '@/lib/country-names'
+import { useFlightFilters } from '@/lib/flights/use-flight-filters'
 import FlightList from './FlightList'
+import FiltersPanel from './FiltersPanel'
 
 type FlightLoadState =
   | { status: 'no-date' }
   | { status: 'loading' }
   | { status: 'loaded'; offers: FlightOffer[] }
   | { status: 'empty' }
+  | { status: 'filtered-empty' }
   | { status: 'error'; onRetry: () => void }
   | { status: 'rate-limited'; retryAfterMinutes: number }
 
@@ -83,7 +86,11 @@ export default function RightPanel() {
 
   const [flightState, setFlightState] = useState<FlightLoadState>({ status: 'no-date' })
   const [cityName, setCityName] = useState<string | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const fetchVersion = useRef(0)
+
+  const { applyClientFilters, activeCount, serverParams } = useFlightFilters()
+  const { adults, children, infants } = serverParams
 
   // Resolve city name for breadcrumb when a city pin is selected
   useEffect(() => {
@@ -112,6 +119,9 @@ export default function RightPanel() {
       departDate: depart,
     })
     if (returnDate) params.set('returnDate', returnDate)
+    if (adults !== 1) params.set('adults', String(adults))
+    if (children !== 0) params.set('children', String(children))
+    if (infants !== 0) params.set('infants', String(infants))
 
     fetch(`/api/flights/search?${params.toString()}`)
       .then(async (res) => {
@@ -137,7 +147,7 @@ export default function RightPanel() {
         if (version !== fetchVersion.current) return
         setFlightState({ status: 'error', onRetry: doFetch })
       })
-  }, [from, to, depart, returnDate])
+  }, [from, to, depart, returnDate, adults, children, infants])
 
   useEffect(() => {
     if (!to) return
@@ -191,6 +201,16 @@ export default function RightPanel() {
 
   const countryName = getCountryName(toCountry)
 
+  // Raw offers from the server feed the airline list; the displayed list is the
+  // result of client-side filtering (duration / stops / time / airline).
+  // Computed inline (not useMemo) because it sits below the early returns above.
+  const rawOffers = flightState.status === 'loaded' ? flightState.offers : []
+  let displayState: FlightLoadState = flightState
+  if (flightState.status === 'loaded') {
+    const filtered = applyClientFilters(flightState.offers)
+    displayState = filtered.length === 0 ? { status: 'filtered-empty' } : { status: 'loaded', offers: filtered }
+  }
+
   return (
     <div className="w-full h-full flex flex-col overflow-hidden">
       <Breadcrumb
@@ -201,7 +221,39 @@ export default function RightPanel() {
         onAllCountries={clearSelection}
         onCountry={goToCountry}
       />
-      <FlightList state={flightState} />
+
+      {/* Collapsible filters */}
+      <div className="flex-shrink-0 border-b border-[#F3F4F6]">
+        <button
+          onClick={() => setFiltersOpen((o) => !o)}
+          className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 transition"
+          aria-expanded={filtersOpen}
+        >
+          <span className="flex items-center gap-2 text-[13px] font-medium text-gray-700">
+            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M6 12h12M10 20h4" />
+            </svg>
+            Filters
+            {activeCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#2B5BE0] text-white text-[10px] font-semibold">
+                {activeCount}
+              </span>
+            )}
+          </span>
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {filtersOpen && <FiltersPanel offers={rawOffers} />}
+      </div>
+
+      <FlightList state={displayState} />
     </div>
   )
 }

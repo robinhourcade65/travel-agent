@@ -13,12 +13,21 @@ export type GetFlightOffersParams = {
   destination: string;
   departDate: string;
   returnDate?: string;
-  passengers?: number;
+  adults?: number;
+  children?: number;
+  infants?: number;
   maxAgeMinutes?: number; // reserved — TTL is computed from departDate for now
 };
 
+// "<adults>-<children>-<infants>" — passenger signature for the price cache.
+// Duffel's total_amount is per-search (all passengers), so a row cached for one
+// pax mix must never be served to another. Defaults to Phase B's '1-0-0'.
+function paxSig(p: { adults?: number; children?: number; infants?: number }): string {
+  return `${p.adults ?? 1}-${p.children ?? 0}-${p.infants ?? 0}`;
+}
+
 function cacheKey(p: GetFlightOffersParams): string {
-  return [p.origin, p.destination, p.departDate, p.returnDate ?? '', String(p.passengers ?? 1)].join('|');
+  return [p.origin, p.destination, p.departDate, p.returnDate ?? '', paxSig(p)].join('|');
 }
 
 function computeTTL(departDate: string): Date {
@@ -57,8 +66,9 @@ function rowToOffer(row: Record<string, unknown>): FlightOffer {
 }
 
 export async function getFlightOffers(params: GetFlightOffersParams): Promise<FlightOffersResult> {
-  const { origin, destination, departDate, returnDate, passengers = 1 } = params;
-  const route = `${origin}→${destination} on ${departDate}`;
+  const { origin, destination, departDate, returnDate, adults = 1, children = 0, infants = 0 } = params;
+  const sig = paxSig(params);
+  const route = `${origin}→${destination} on ${departDate} [${sig}]`;
 
   // 1 — DB cache check
   const admin = createAdminClient();
@@ -68,6 +78,7 @@ export async function getFlightOffers(params: GetFlightOffersParams): Promise<Fl
     .eq('origin', origin)
     .eq('destination', destination)
     .eq('depart_date', departDate)
+    .eq('pax_sig', sig)
     .gt('expires_at', new Date().toISOString())
     .order('price_minor', { ascending: true });
 
@@ -95,7 +106,7 @@ export async function getFlightOffers(params: GetFlightOffersParams): Promise<Fl
   }
 
   // 3 — new Duffel fetch
-  const fetchPromise = fetchAndStore({ origin, destination, departDate, returnDate, passengers });
+  const fetchPromise = fetchAndStore({ origin, destination, departDate, returnDate, adults, children, infants });
   pendingRequests.set(key, fetchPromise);
   // .catch first so the .finally chain never produces an unhandled rejection on Node 20+
   fetchPromise.catch(() => {}).finally(() => pendingRequests.delete(key));
@@ -108,18 +119,26 @@ async function fetchAndStore(params: {
   destination: string;
   departDate: string;
   returnDate: string | undefined;
-  passengers: number;
+  adults: number;
+  children: number;
+  infants: number;
 }): Promise<FlightOffersResult> {
-  const { origin, destination, departDate, returnDate, passengers } = params;
-  const route = `${origin}→${destination} on ${departDate}`;
+  const { origin, destination, departDate, returnDate, adults, children, infants } = params;
+  const sig = `${adults}-${children}-${infants}`;
+  const route = `${origin}→${destination} on ${departDate} [${sig}]`;
 
   console.log(`[cache] duffel ${route} — calling Duffel API`);
 
+  // Note: max_connections is intentionally NOT passed — we fetch the complete
+  // offer set so one cache entry serves every stop filter; the stop limit is
+  // applied client-side. Passengers DO change price, so they vary the cache key.
   const searchParams: SearchOffersParams = {
     origin,
     destination,
     departDate,
-    passengers,
+    adults,
+    children,
+    infants,
     ...(returnDate !== undefined ? { returnDate } : {}),
   };
 
@@ -141,7 +160,8 @@ async function fetchAndStore(params: {
     .delete()
     .eq('origin', origin)
     .eq('destination', destination)
-    .eq('depart_date', departDate);
+    .eq('depart_date', departDate)
+    .eq('pax_sig', sig);
 
   deleteQuery =
     returnDate !== undefined
@@ -158,6 +178,7 @@ async function fetchAndStore(params: {
     destination,
     depart_date: departDate,
     return_date: returnDate ?? null,
+    pax_sig: sig,
     price_minor: offer.priceMinor,
     currency: offer.currency,
     airline: offer.airline || null,

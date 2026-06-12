@@ -32,8 +32,10 @@ export type Filters = {
   airlines: Set<string> // IATA codes; empty = all airlines
 }
 
+// Only passengers reach the search API: they change Duffel's total_amount and
+// therefore the cache key. Stops/duration/time/airline are all client-side, so
+// changing them never triggers a re-fetch (instant + rate-limit friendly).
 export type ServerFilterParams = {
-  maxConnections?: 0 | 1 | 2
   adults: number
   children: number
   infants: number
@@ -154,21 +156,10 @@ export function useFlightFilters() {
   )
 
   // Params that change the actual Duffel search (re-fetch on change).
-  const serverParams = useMemo<ServerFilterParams>(() => {
-    const maxConnections: 0 | 1 | 2 | undefined = filters.direct
-      ? 0
-      : filters.stops === 'max1'
-        ? 1
-        : filters.stops === 'max2'
-          ? 2
-          : undefined
-    return {
-      ...(maxConnections !== undefined ? { maxConnections } : {}),
-      adults: filters.adults,
-      children: filters.children,
-      infants: filters.infants,
-    }
-  }, [filters])
+  const serverParams = useMemo<ServerFilterParams>(
+    () => ({ adults: filters.adults, children: filters.children, infants: filters.infants }),
+    [filters],
+  )
 
   // Pure client-side narrowing applied after results return: duration,
   // time-of-day (both legs), and airline. Stops/passengers are already handled

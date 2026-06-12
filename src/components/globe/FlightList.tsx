@@ -12,6 +12,7 @@ type LoadState =
   | { status: 'loading' }
   | { status: 'loaded'; offers: FlightOffer[] }
   | { status: 'empty' }
+  | { status: 'filtered-empty' }
   | { status: 'error'; onRetry: () => void }
   | { status: 'rate-limited'; retryAfterMinutes: number }
 
@@ -97,7 +98,16 @@ export default function FlightList({ state }: Props) {
           <div className="flex flex-col items-center justify-center h-full gap-2 px-6 py-12 text-center">
             <p className="text-sm font-medium text-gray-700">No flights found for these dates.</p>
             <p className="text-xs text-gray-400 leading-relaxed">
-              Try widening the date flexibility — coming soon.
+              Try a nearby date from the flexibility strip above.
+            </p>
+          </div>
+        )}
+
+        {state.status === 'filtered-empty' && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 px-6 py-12 text-center">
+            <p className="text-sm font-medium text-gray-700">No flights match your filters.</p>
+            <p className="text-xs text-gray-400 leading-relaxed">
+              Loosen the filters above to see more options.
             </p>
           </div>
         )}

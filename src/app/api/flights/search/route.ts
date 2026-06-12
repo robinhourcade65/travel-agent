@@ -41,11 +41,16 @@ function checkRateLimit(key: string, limitPerHour: number): { allowed: boolean; 
 const IATA_RE = /^[A-Z]{3}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/; // strict YYYY-MM-DD only (rejects ISO datetimes)
 
+const paxField = (max: number) => z.coerce.number().int().min(0).max(max).optional();
+
 const searchSchema = z.object({
   origin: z.string().regex(IATA_RE, 'Must be a 3-letter uppercase IATA code'),
   destination: z.string().regex(IATA_RE, 'Must be a 3-letter uppercase IATA code'),
   departDate: z.string().regex(DATE_RE, 'Must be YYYY-MM-DD'),
   returnDate: z.string().regex(DATE_RE, 'Must be YYYY-MM-DD').optional(),
+  adults: z.coerce.number().int().min(1).max(9).optional(),
+  children: paxField(9),
+  infants: paxField(9),
 });
 
 function badRequest(message: string) {
@@ -81,6 +86,9 @@ export async function GET(request: NextRequest) {
     destination: searchParams.get('destination')?.toUpperCase(),
     departDate: searchParams.get('departDate'),
     returnDate: searchParams.get('returnDate') ?? undefined,
+    adults: searchParams.get('adults') ?? undefined,
+    children: searchParams.get('children') ?? undefined,
+    infants: searchParams.get('infants') ?? undefined,
   };
 
   const parsed = searchSchema.safeParse(raw);
@@ -89,7 +97,7 @@ export async function GET(request: NextRequest) {
     return badRequest(`${String(first.path[0] ?? 'field')}: ${first.message}`);
   }
 
-  const { origin, destination, departDate, returnDate } = parsed.data;
+  const { origin, destination, departDate, returnDate, adults, children, infants } = parsed.data;
 
   // 2 — Date range validation (UTC-aware)
   const todayUtc = new Date().toISOString().slice(0, 10);
@@ -142,7 +150,7 @@ export async function GET(request: NextRequest) {
 
   // 6 — Fetch (cache-first)
   try {
-    const { offers, cached } = await getFlightOffers({ origin, destination, departDate, returnDate });
+    const { offers, cached } = await getFlightOffers({ origin, destination, departDate, returnDate, adults, children, infants });
 
     return Response.json(
       { cached, results: offers, count: offers.length },
