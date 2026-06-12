@@ -4,6 +4,8 @@ export type FlightOffer = {
   destination: string;
   departAt: string;
   arriveAt: string;
+  // Return-leg departure time (local, ISO). null for one-way trips / legacy rows.
+  returnDepartAt: string | null;
   durationMinutes: number;
   stops: number;
   airline: string;

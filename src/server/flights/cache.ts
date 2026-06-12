@@ -45,6 +45,7 @@ function rowToOffer(row: Record<string, unknown>): FlightOffer {
     destination: String(row.destination),
     departAt,
     arriveAt,
+    returnDepartAt: null, // populated in Phase C (return-leg time-of-day)
     durationMinutes,
     stops: Number(row.stops ?? 0),
     airline: String(row.airline ?? ''),

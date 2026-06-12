@@ -60,6 +60,7 @@ export async function searchOffers(params: SearchOffersParams): Promise<FlightOf
         destination: lastSegment.destination.iata_code ?? destination,
         departAt: firstSegment.departing_at,
         arriveAt: lastSegment.arriving_at,
+        returnDepartAt: null, // populated in Phase C (return-leg time-of-day)
         durationMinutes: parseDurationMinutes(outboundSlice.duration),
         stops: outboundSlice.segments.length - 1,
         airline: offer.owner.name,

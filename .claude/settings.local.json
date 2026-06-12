@@ -4,7 +4,8 @@
       "Bash(npm --version)",
       "Bash(git -C /Users/robinhourcade/Desktop/TRIPME/travel-agent add src/app/api/flights/search/route.ts)",
       "Bash(git -C /Users/robinhourcade/Desktop/TRIPME/travel-agent commit -m 'chore\\(api\\): temporarily raise anon rate limit for dev testing *)",
-      "Bash(git -C /Users/robinhourcade/Desktop/TRIPME/travel-agent push origin main)"
+      "Bash(git -C /Users/robinhourcade/Desktop/TRIPME/travel-agent push origin main)",
+      "Bash(npx tsc *)"
     ]
   }
 }
