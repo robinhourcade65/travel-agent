@@ -1,7 +1,90 @@
 'use client'
 
+import { useState } from 'react'
 import type { FlightOffer } from '@/types/flights'
-import { useFlightFilters, type StopsOption } from '@/lib/flights/use-flight-filters'
+import { useFlightFilters, type StopsOption, type TimeSlot } from '@/lib/flights/use-flight-filters'
+
+const TIME_SLOTS: { value: TimeSlot; label: string; hint: string }[] = [
+  { value: 'morning', label: 'Morning', hint: '5am–12pm' },
+  { value: 'afternoon', label: 'Afternoon', hint: '12pm+' },
+]
+
+function toggleSlot(set: Set<TimeSlot>, slot: TimeSlot): Set<TimeSlot> {
+  const next = new Set(set)
+  if (next.has(slot)) next.delete(slot)
+  else next.add(slot)
+  return next
+}
+
+function TimeChips({ selected, onToggle }: { selected: Set<TimeSlot>; onToggle: (slot: TimeSlot) => void }) {
+  return (
+    <div className="flex gap-2">
+      {TIME_SLOTS.map((s) => {
+        const active = selected.has(s.value)
+        return (
+          <button
+            key={s.value}
+            type="button"
+            onClick={() => onToggle(s.value)}
+            className={`flex-1 px-3 py-2 rounded-lg border text-xs font-medium transition ${
+              active
+                ? 'bg-[#2B5BE0] border-[#2B5BE0] text-white'
+                : 'bg-white border-[#E5E7EB] text-gray-600 hover:border-[#2B5BE0] hover:text-[#2B5BE0]'
+            }`}
+          >
+            {s.label}
+            <span className={`block text-[10px] font-normal ${active ? 'text-white/80' : 'text-gray-400'}`}>
+              {s.hint}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function AirlineChip({
+  iata,
+  name,
+  active,
+  onToggle,
+}: {
+  iata: string
+  name: string
+  active: boolean
+  onToggle: () => void
+}) {
+  const [errored, setErrored] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={name}
+      className={`flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border text-xs font-medium transition ${
+        active
+          ? 'bg-[#2B5BE0]/10 border-[#2B5BE0] text-[#2B5BE0]'
+          : 'bg-white border-[#E5E7EB] text-gray-600 hover:border-[#2B5BE0]'
+      }`}
+    >
+      {errored ? (
+        <span className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center text-[9px] font-bold text-gray-500">
+          {iata}
+        </span>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`https://content.airhex.com/content/logos/airlines_${iata}_50_50_s.png`}
+          alt={iata}
+          width={20}
+          height={20}
+          className="w-5 h-5 rounded-full object-contain bg-gray-50"
+          onError={() => setErrored(true)}
+        />
+      )}
+      <span className="truncate max-w-[90px]">{name}</span>
+    </button>
+  )
+}
 
 // Duration slider marks. The final mark (null) means "Any" — no limit.
 const DURATION_MARKS: { label: string; value: number | null }[] = [
@@ -75,12 +158,12 @@ function Counter({
 
 type Props = {
   // Raw (unfiltered) offers from the current search — drives the airline list.
-  // Unused until the airline section ships; accepted now to keep the API stable.
   offers: FlightOffer[]
 }
 
-export default function FiltersPanel({ offers: _offers }: Props) {
-  const { filters, setFilter } = useFlightFilters()
+export default function FiltersPanel({ offers }: Props) {
+  const { filters, setFilter, topAirlines, isRoundTrip } = useFlightFilters()
+  const airlines = topAirlines(offers)
 
   // Map the slider index (0..4) to a duration cap; index 4 = Any (null).
   const durIndex = filters.durMax === null
@@ -162,6 +245,46 @@ export default function FiltersPanel({ offers: _offers }: Props) {
           onChange={(v) => setFilter({ infants: v })}
         />
       </Section>
+
+      {/* Departure time */}
+      <Section title="Departure time">
+        <TimeChips
+          selected={filters.depTime}
+          onToggle={(slot) => setFilter({ depTime: toggleSlot(filters.depTime, slot) })}
+        />
+      </Section>
+
+      {/* Return time — round-trip only */}
+      {isRoundTrip && (
+        <Section title="Return time">
+          <TimeChips
+            selected={filters.retTime}
+            onToggle={(slot) => setFilter({ retTime: toggleSlot(filters.retTime, slot) })}
+          />
+        </Section>
+      )}
+
+      {/* Airlines — hidden when fewer than 2 distinct airlines in the results */}
+      {airlines.length >= 2 && (
+        <Section title="Airlines">
+          <div className="flex flex-wrap gap-1.5">
+            {airlines.map((a) => (
+              <AirlineChip
+                key={a.iata}
+                iata={a.iata}
+                name={a.name}
+                active={filters.airlines.has(a.iata)}
+                onToggle={() => {
+                  const next = new Set(filters.airlines)
+                  if (next.has(a.iata)) next.delete(a.iata)
+                  else next.add(a.iata)
+                  setFilter({ airlines: next })
+                }}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   )
 }

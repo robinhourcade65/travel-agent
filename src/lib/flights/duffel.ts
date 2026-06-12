@@ -73,6 +73,8 @@ export async function searchOffers(params: SearchOffersParams): Promise<FlightOf
       const outboundSlice = offer.slices[0];
       const firstSegment = outboundSlice.segments[0];
       const lastSegment = outboundSlice.segments[outboundSlice.segments.length - 1];
+      // Return leg (round-trip only): first segment's departure of the 2nd slice.
+      const returnDepartAt = offer.slices[1]?.segments[0]?.departing_at ?? null;
 
       return {
         id: offer.id,
@@ -80,7 +82,7 @@ export async function searchOffers(params: SearchOffersParams): Promise<FlightOf
         destination: lastSegment.destination.iata_code ?? destination,
         departAt: firstSegment.departing_at,
         arriveAt: lastSegment.arriving_at,
-        returnDepartAt: null, // populated in Phase C (return-leg time-of-day)
+        returnDepartAt,
         durationMinutes: parseDurationMinutes(outboundSlice.duration),
         stops: outboundSlice.segments.length - 1,
         airline: offer.owner.name,

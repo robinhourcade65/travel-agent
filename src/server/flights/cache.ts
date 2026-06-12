@@ -54,7 +54,7 @@ function rowToOffer(row: Record<string, unknown>): FlightOffer {
     destination: String(row.destination),
     departAt,
     arriveAt,
-    returnDepartAt: null, // populated in Phase C (return-leg time-of-day)
+    returnDepartAt: row.return_depart_at ? String(row.return_depart_at) : null,
     durationMinutes,
     stops: Number(row.stops ?? 0),
     airline: String(row.airline ?? ''),
@@ -187,6 +187,7 @@ async function fetchAndStore(params: {
     duration_minutes: offer.durationMinutes || null,
     depart_at: offer.departAt,
     arrive_at: offer.arriveAt,
+    return_depart_at: offer.returnDepartAt,
     deeplink: offer.deeplink,
     source: 'duffel',
     expires_at: expiresAt,
