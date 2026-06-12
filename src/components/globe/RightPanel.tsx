@@ -8,6 +8,7 @@ import { getCountryName } from '@/lib/country-names'
 import { useFlightFilters } from '@/lib/flights/use-flight-filters'
 import FlightList from './FlightList'
 import FiltersPanel from './FiltersPanel'
+import FlexStrip from './FlexStrip'
 
 type FlightLoadState =
   | { status: 'no-date' }
@@ -252,6 +253,8 @@ export default function RightPanel() {
         </button>
         {filtersOpen && <FiltersPanel offers={rawOffers} />}
       </div>
+
+      <FlexStrip />
 
       <FlightList state={displayState} />
     </div>
