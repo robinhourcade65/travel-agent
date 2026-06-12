@@ -72,6 +72,22 @@ function Breadcrumb({
   )
 }
 
+function FilterIcon() {
+  return (
+    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M6 12h12M10 20h4" />
+    </svg>
+  )
+}
+
+function FilterBadge({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#2B5BE0] text-white text-[10px] font-semibold">
+      {count}
+    </span>
+  )
+}
+
 export default function RightPanel() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -87,8 +103,11 @@ export default function RightPanel() {
 
   const [flightState, setFlightState] = useState<FlightLoadState>({ status: 'no-date' })
   const [cityName, setCityName] = useState<string | null>(null)
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false) // desktop inline collapsible
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false) // mobile full-screen sheet
   const fetchVersion = useRef(0)
+  // Swipe-down to dismiss the mobile filters sheet.
+  const dragStartY = useRef<number | null>(null)
 
   const { applyClientFilters, activeCount, serverParams } = useFlightFilters()
   const { adults, children, infants } = serverParams
@@ -223,23 +242,17 @@ export default function RightPanel() {
         onCountry={goToCountry}
       />
 
-      {/* Collapsible filters */}
-      <div className="flex-shrink-0 border-b border-[#F3F4F6]">
+      {/* Filters — desktop: inline collapsible */}
+      <div className="hidden md:block flex-shrink-0 border-b border-[#F3F4F6]">
         <button
           onClick={() => setFiltersOpen((o) => !o)}
           className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 transition"
           aria-expanded={filtersOpen}
         >
           <span className="flex items-center gap-2 text-[13px] font-medium text-gray-700">
-            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M6 12h12M10 20h4" />
-            </svg>
+            <FilterIcon />
             Filters
-            {activeCount > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#2B5BE0] text-white text-[10px] font-semibold">
-                {activeCount}
-              </span>
-            )}
+            {activeCount > 0 && <FilterBadge count={activeCount} />}
           </span>
           <svg
             className={`w-4 h-4 text-gray-400 transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
@@ -253,6 +266,53 @@ export default function RightPanel() {
         </button>
         {filtersOpen && <FiltersPanel offers={rawOffers} />}
       </div>
+
+      {/* Filters — mobile: button that opens a full-screen sheet */}
+      <div className="md:hidden flex-shrink-0 border-b border-[#F3F4F6] px-4 py-2">
+        <button
+          onClick={() => setMobileFiltersOpen(true)}
+          className="flex items-center gap-2 text-[13px] font-medium text-gray-700"
+        >
+          <FilterIcon />
+          Filters
+          {activeCount > 0 && <FilterBadge count={activeCount} />}
+        </button>
+      </div>
+
+      {mobileFiltersOpen && (
+        <div className="md:hidden fixed inset-0 z-40 bg-white flex flex-col">
+          <div
+            className="flex-shrink-0 border-b border-[#E5E7EB]"
+            onTouchStart={(e) => {
+              dragStartY.current = e.touches[0].clientY
+            }}
+            onTouchEnd={(e) => {
+              if (dragStartY.current === null) return
+              if (e.changedTouches[0].clientY - dragStartY.current > 50) setMobileFiltersOpen(false)
+              dragStartY.current = null
+            }}
+          >
+            <div className="flex flex-col items-center pt-2 pb-1">
+              <div className="w-8 h-1 rounded-full bg-gray-300" />
+            </div>
+            <div className="flex items-center justify-between px-4 pb-2">
+              <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                Filters
+                {activeCount > 0 && <FilterBadge count={activeCount} />}
+              </span>
+              <button
+                onClick={() => setMobileFiltersOpen(false)}
+                className="text-sm font-semibold text-[#2B5BE0] px-2 py-1"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <FiltersPanel offers={rawOffers} />
+          </div>
+        </div>
+      )}
 
       <FlexStrip />
 
